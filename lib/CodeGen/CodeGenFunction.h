@@ -1188,6 +1188,10 @@ public:
   /// instrumented with __cyg_profile_func_* calls
   bool ShouldInstrumentFunction();
 
+  /// ShouldProfileFunction - Return true if the current function should be
+  /// instrumented with mcount calls
+  bool ShouldProfileFunction();
+
   /// EmitFunctionInstrumentation - Emit LLVM code to call the specified
   /// instrumentation function with the current function and the call site, if
   /// function instrumentation is enabled.

@@ -199,6 +199,18 @@ void CodeGenFunction::EmitFunctionInstrumentation(const char *Fn) {
                       CallSite);
 }
 
+/// ShouldProfileFunction - Return true if the current function should be
+/// instrumented with mcount calls
+bool CodeGenFunction::ShouldProfileFunction() {
+  if (!CGM.getCodeGenOpts().InstrumentForProfiling)
+    return false;
+  if (CurFuncDecl->hasAttr<NoInstrumentFunctionAttr>())
+    return false;
+  if (CurFn->hasFnAttr(llvm::Attribute::InlineHint))
+    return false;
+  return true;
+}
+
 void CodeGenFunction::EmitMCountInstrumentation() {
   llvm::FunctionType *FTy =
     llvm::FunctionType::get(llvm::Type::getVoidTy(getLLVMContext()), false);
@@ -274,7 +286,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   if (ShouldInstrumentFunction())
     EmitFunctionInstrumentation("__cyg_profile_func_enter");
 
-  if (CGM.getCodeGenOpts().InstrumentForProfiling)
+  if (ShouldProfileFunction())
     EmitMCountInstrumentation();
 
   if (RetTy->isVoidType()) {

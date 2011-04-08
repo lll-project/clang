@@ -5138,6 +5138,8 @@ QualType ASTContext::mergeFunctionTypes(QualType lhs, QualType rhs,
     return QualType();
 
   // Regparm is part of the calling convention.
+  if (lbaseInfo.getHasRegParm() != rbaseInfo.getHasRegParm())
+    return QualType();
   if (lbaseInfo.getRegParm() != rbaseInfo.getRegParm())
     return QualType();
 
@@ -5150,6 +5152,7 @@ QualType ASTContext::mergeFunctionTypes(QualType lhs, QualType rhs,
     allRTypes = false;
 
   FunctionType::ExtInfo einfo(NoReturn,
+                              lbaseInfo.getHasRegParm(),
                               lbaseInfo.getRegParm(),
                               lbaseInfo.getCC());
 
