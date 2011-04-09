@@ -48,7 +48,6 @@
 // COMMON:#define __STDC_HOSTED__ 1
 // COMMON:#define __STDC_VERSION__
 // COMMON:#define __STDC__ 1
-// COMMON:#define __VERSION__
 // COMMON:#define __clang__ 1
 // COMMON:#define __clang_major__ {{[0-9]+}}
 // COMMON:#define __clang_minor__ {{[0-9]+}}
@@ -506,7 +505,7 @@
 // I386-LINUX:#define __WCHAR_MAX__ 2147483647
 // I386-LINUX:#define __WCHAR_TYPE__ int
 // I386-LINUX:#define __WCHAR_WIDTH__ 32
-// I386-LINUX:#define __WINT_TYPE__ unsigned int
+// I386-LINUX:#define __WINT_TYPE__ int
 // I386-LINUX:#define __WINT_WIDTH__ 32
 // I386-LINUX:#define __i386 1
 // I386-LINUX:#define __i386__ 1
@@ -982,7 +981,6 @@
 // SPARC:#define __SIZE_WIDTH__ 32
 // SPARC:#define __UINTMAX_TYPE__ long long unsigned int
 // SPARC:#define __USER_LABEL_PREFIX__ _
-// SPARC:#define __VERSION__ "4.2.1 Compatible
 // SPARC:#define __WCHAR_MAX__ 2147483647
 // SPARC:#define __WCHAR_TYPE__ int
 // SPARC:#define __WCHAR_WIDTH__ 32

@@ -413,7 +413,7 @@ public:
     : OSTargetInfo<Target>(triple) {
     this->UserLabelPrefix = "";
     this->WCharType = this->SignedLong;
-    // FIXME: WIntType should be SignedLong
+    this->WIntType = this->SignedLong;
   }
 };
 
@@ -434,7 +434,7 @@ public:
     : OSTargetInfo<Target>(triple) {
     this->UserLabelPrefix = "";
     this->WCharType = this->SignedLong;
-    // FIXME: WIntType should be SignedLong
+    this->WIntType = this->SignedLong;
   }
 };
 
