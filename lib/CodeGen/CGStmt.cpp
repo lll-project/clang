@@ -1129,6 +1129,7 @@ SimplifyConstraint(const char *Constraint, const TargetInfo &Target,
       Result += Target.convertConstraint(*Constraint);
       break;
     // Ignore these
+    case '&':
     case '*':
     case '?':
     case '!':
