@@ -76,6 +76,8 @@ def err_drv_cc_print_options_failure : Error<
     "unable to open CC_PRINT_OPTIONS file: %0">;
 def err_drv_preamble_format : Error<
     "incorrect format for -preamble-bytes=N,END">;
+def err_drv_unused_argument : Error<
+  "argument unused during compilation: '%0'">;
 
 def warn_c_kext : Warning<
   "ignoring -fapple-kext which is valid for c++ and objective-c++ only">;

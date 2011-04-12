@@ -158,9 +158,6 @@ def warn_pch_microsoft_extensions : Error<
 def warn_pch_ms_bitfields : Error<
     "Microsoft-compatible structure layout was %select{disabled|enabled}0 in "
     "PCH file but is currently %select{disabled|enabled}1">;
-def warn_pch_heinous_extensions : Error<
-    "heinous extensions were %select{disabled|enabled}0 in PCH file but are "
-    "currently %select{disabled|enabled}1">;
 def warn_pch_lax_vector_conversions : Error<
     "lax vector conversions were %select{disabled|enabled}0 in PCH file but "
     "are currently %select{disabled|enabled}1">;

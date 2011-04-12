@@ -158,8 +158,7 @@ static void CodeGenOptsToArgs(const CodeGenOptions &Opts,
   if (Opts.AsmVerbose)
     Res.push_back("-masm-verbose");
   if (!Opts.CodeModel.empty()) {
-    Res.push_back("-mcode-model");
-    Res.push_back(Opts.CodeModel);
+    Res.push_back("-mcmodel=" + Opts.CodeModel);
   }
   if (!Opts.CXAAtExit)
     Res.push_back("-fno-use-cxa-atexit");
@@ -618,8 +617,6 @@ static void LangOptsToArgs(const LangOptions &Opts,
       Res.push_back(Opts.OverflowHandler);
     }
   }
-  if (Opts.HeinousExtensions)
-    Res.push_back("-fheinous-gnu-extensions");
   // Optimize is implicit.
   // OptimizeSize is implicit.
   if (Opts.Static)
@@ -927,7 +924,7 @@ static void ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.AsmVerbose = Args.hasArg(OPT_masm_verbose);
   Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
   Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
-  Opts.CodeModel = Args.getLastArgValue(OPT_mcode_model);
+  Opts.CodeModel = Args.getLastArgValue(OPT_mcmodel);
   Opts.DebugPass = Args.getLastArgValue(OPT_mdebug_pass);
   Opts.DisableFPElim = Args.hasArg(OPT_mdisable_fp_elim);
   Opts.FloatABI = Args.getLastArgValue(OPT_mfloat_abi);
@@ -1476,7 +1473,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.Freestanding = Args.hasArg(OPT_ffreestanding);
   Opts.NoBuiltin = Args.hasArg(OPT_fno_builtin) || Opts.Freestanding;
   Opts.AssumeSaneOperatorNew = !Args.hasArg(OPT_fno_assume_sane_operator_new);
-  Opts.HeinousExtensions = Args.hasArg(OPT_fheinous_gnu_extensions);
   Opts.AccessControl = !Args.hasArg(OPT_fno_access_control);
   Opts.ElideConstructors = !Args.hasArg(OPT_fno_elide_constructors);
   Opts.MathErrno = Args.hasArg(OPT_fmath_errno);

@@ -3294,14 +3294,8 @@ let CategoryName = "Inline Assembly Issue" in {
   def err_asm_unknown_register_name : Error<"unknown register name '%0' in asm">;
   def warn_asm_label_on_auto_decl : Warning<
     "ignored asm label '%0' on automatic variable">;
-  def err_invalid_asm_cast_lvalue : Error<
-    "invalid use of a cast in a inline asm context requiring an l-value: "
-    "remove the cast or build with -fheinous-gnu-extensions">;
-
   def warn_invalid_asm_cast_lvalue : Warning<
-    "invalid use of a cast in a inline asm context requiring an l-value: "
-    "accepted due to -fheinous-gnu-extensions, but clang may remove support "
-    "for this in the future">;
+    "invalid use of a cast in a inline asm context requiring an l-value">;
 }
 
 let CategoryName = "Semantic Issue" in {

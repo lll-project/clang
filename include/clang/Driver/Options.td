@@ -150,8 +150,10 @@ def ObjC : Flag<"-ObjC">, Flags<[DriverOption]>,
 def O : Joined<"-O">, Group<O_Group>;
 def P : Flag<"-P">;
 def Qn : Flag<"-Qn">;
-def Qunused_arguments : Flag<"-Qunused-arguments">, Flags<[DriverOption]>,
+def Wno_unused_arguments : Flag<"-Wno-unused-arguments">, Flags<[DriverOption, NoArgumentUnused]>,
   HelpText<"Don't emit warning for unused driver arguments">;
+def Werror_unused_arguments : Flag<"-Werror-unused-arguments">, Flags<[DriverOption, NoArgumentUnused]>,
+  HelpText<"Treat unused driver argument warnings as errors">;
 def Q : Flag<"-Q">;
 def R : Flag<"-R">;
 def S : Flag<"-S">, Flags<[DriverOption]>,
@@ -263,6 +265,7 @@ def fcolor_diagnostics : Flag<"-fcolor-diagnostics">, Group<f_Group>;
 def fcommon : Flag<"-fcommon">, Group<f_Group>;
 def fcompile_resource_EQ : Joined<"-fcompile-resource=">, Group<f_Group>;
 def fconstant_cfstrings : Flag<"-fconstant-cfstrings">, Group<f_Group>;
+def mconstant_cfstrings : Flag<"-mconstant-cfstrings">, Alias<fconstant_cfstrings>; 
 def fconstant_string_class_EQ : Joined<"-fconstant-string-class=">, Group<f_Group>;
 def fcreate_profile : Flag<"-fcreate-profile">, Group<f_Group>;
 def fcxx_exceptions: Flag<"-fcxx-exceptions">, Group<f_Group>;
@@ -282,8 +285,6 @@ def fencoding_EQ : Joined<"-fencoding=">, Group<f_Group>;
 def fexceptions : Flag<"-fexceptions">, Group<f_Group>;
 def fextdirs_EQ : Joined<"-fextdirs=">, Group<f_Group>;
 def fhosted : Flag<"-fhosted">, Group<f_Group>;
-def ffast_math : Flag<"-ffast-math">, Group<clang_ignored_f_Group>;
-def ffinite_math_only : Flag<"-ffinite-math-only">, Group<clang_ignored_f_Group>;
 
 def ffor_scope : Flag<"-ffor-scope">, Group<f_Group>;
 def fno_for_scope : Flag<"-fno-for-scope">, Group<f_Group>;
@@ -291,13 +292,9 @@ def fno_for_scope : Flag<"-fno-for-scope">, Group<f_Group>;
 def ffreestanding : Flag<"-ffreestanding">, Group<f_Group>;
 def fgnu_keywords : Flag<"-fgnu-keywords">, Group<f_Group>;
 def fgnu_runtime : Flag<"-fgnu-runtime">, Group<f_Group>;
-def fheinous_gnu_extensions : Flag<"-fheinous-gnu-extensions">;
 def filelist : Separate<"-filelist">, Flags<[LinkerInput]>;
 def findirect_virtual_calls : Flag<"-findirect-virtual-calls">, Group<f_Group>;
-def finline_functions : Flag<"-finline-functions">, Group<clang_ignored_f_Group>;
-def finline : Flag<"-finline">, Group<clang_ignored_f_Group>;
 def finstrument_functions : Flag<"-finstrument-functions">, Group<f_Group>;
-def fkeep_inline_functions : Flag<"-fkeep-inline-functions">, Group<clang_ignored_f_Group>;
 def flat__namespace : Flag<"-flat_namespace">;
 def flax_vector_conversions : Flag<"-flax-vector-conversions">, Group<f_Group>;
 def flimit_debug_info : Flag<"-flimit-debug-info">, Group<f_Group>,
@@ -328,6 +325,7 @@ def fno_caret_diagnostics : Flag<"-fno-caret-diagnostics">, Group<f_Group>;
 def fno_color_diagnostics : Flag<"-fno-color-diagnostics">, Group<f_Group>;
 def fno_common : Flag<"-fno-common">, Group<f_Group>;
 def fno_constant_cfstrings : Flag<"-fno-constant-cfstrings">, Group<f_Group>;
+def mno_constant_cfstrings : Flag<"-mno-constant-cfstrings">, Alias<fno_constant_cfstrings>;
 def fno_cxx_exceptions: Flag<"-fno-cxx-exceptions">, Group<f_Group>;
 def fno_diagnostics_fixit_info : Flag<"-fno-diagnostics-fixit-info">, Group<f_Group>;
 def fno_diagnostics_show_option : Flag<"-fno-diagnostics-show-option">, Group<f_Group>;
@@ -336,11 +334,7 @@ def fno_dollars_in_identifiers : Flag<"-fno-dollars-in-identifiers">, Group<f_Gr
 def fno_elide_constructors : Flag<"-fno-elide-constructors">, Group<f_Group>;
 def fno_eliminate_unused_debug_symbols : Flag<"-fno-eliminate-unused-debug-symbols">, Group<f_Group>;
 def fno_exceptions : Flag<"-fno-exceptions">, Group<f_Group>;
-def fno_finite_math_only : Flag<"-fno-finite-math-only">, Group<clang_ignored_f_Group>;
 def fno_gnu_keywords : Flag<"-fno-gnu-keywords">, Group<f_Group>;
-def fno_inline_functions : Flag<"-fno-inline-functions">, Group<clang_ignored_f_Group>;
-def fno_inline : Flag<"-fno-inline">, Group<clang_ignored_f_Group>;
-def fno_keep_inline_functions : Flag<"-fno-keep-inline-functions">, Group<clang_ignored_f_Group>;
 def fno_lax_vector_conversions : Flag<"-fno-lax-vector-conversions">, Group<f_Group>;
 def fno_math_errno : Flag<"-fno-math-errno">, Group<f_Group>;
 def fno_merge_all_constants : Flag<"-fno-merge-all-constants">, Group<f_Group>;
@@ -367,8 +361,6 @@ def fno_verbose_asm : Flag<"-fno-verbose-asm">, Group<f_Group>;
 def fno_working_directory : Flag<"-fno-working-directory">, Group<f_Group>;
 def fno_wrapv : Flag<"-fno-wrapv">, Group<f_Group>;
 def fno_zero_initialized_in_bss : Flag<"-fno-zero-initialized-in-bss">, Group<f_Group>;
-def fobjc_atdefs : Flag<"-fobjc-atdefs">, Group<clang_ignored_f_Group>;
-def fobjc_call_cxx_cdtors : Flag<"-fobjc-call-cxx-cdtors">, Group<clang_ignored_f_Group>;
 def fobjc_default_synthesize_properties : 
   Flag<"-fobjc-default-synthesize-properties">, Group<f_Group>;
 def fobjc_exceptions: Flag<"-fobjc-exceptions">, Group<f_Group>;
@@ -376,7 +368,6 @@ def fobjc_exceptions: Flag<"-fobjc-exceptions">, Group<f_Group>;
 def fobjc_gc_only : Flag<"-fobjc-gc-only">, Group<f_Group>;
 def fobjc_gc : Flag<"-fobjc-gc">, Group<f_Group>;
 def fobjc_legacy_dispatch : Flag<"-fobjc-legacy-dispatch">, Group<f_Group>;
-def fobjc_new_property : Flag<"-fobjc-new-property">, Group<clang_ignored_f_Group>;
 
 // Objective-C ABI options.
 def fobjc_abi_version_EQ : Joined<"-fobjc-abi-version=">, Group<f_Group>;
@@ -399,11 +390,8 @@ def fno_pie : Flag<"-fno-pie">, Group<f_Group>;
 def fprofile_arcs : Flag<"-fprofile-arcs">, Group<f_Group>;
 def fprofile_generate : Flag<"-fprofile-generate">, Group<f_Group>;
 def framework : Separate<"-framework">, Flags<[LinkerInput]>;
-def frandom_seed_EQ : Joined<"-frandom-seed=">, Group<clang_ignored_f_Group>;
 def frtti : Flag<"-frtti">, Group<f_Group>;
-def fsched_interblock : Flag<"-fsched-interblock">, Group<clang_ignored_f_Group>;
 def fshort_enums : Flag<"-fshort-enums">, Group<f_Group>;
-def freorder_blocks : Flag<"-freorder-blocks">, Group<clang_ignored_f_Group>;
 def fshort_wchar : Flag<"-fshort-wchar">, Group<f_Group>;
 def fshow_overloads_EQ : Joined<"-fshow-overloads=">, Group<f_Group>;
 def fshow_source_location : Flag<"-fshow-source-location">, Group<f_Group>;
@@ -422,13 +410,6 @@ def ftemplate_backtrace_limit_EQ : Joined<"-ftemplate-backtrace-limit=">,
                                    Group<f_Group>;
 def Wlarge_by_value_copy_def : Flag<"-Wlarge-by-value-copy">;
 def Wlarge_by_value_copy_EQ : Joined<"-Wlarge-by-value-copy=">;
-
-// Just silence warnings about -Wlarger-than,  -Wframe-larger-than for now.
-def Wlarger_than : Separate<"-Wlarger-than">, Group<clang_ignored_f_Group>;
-def Wlarger_than_EQ : Joined<"-Wlarger-than=">, Alias<Wlarger_than>;
-def Wlarger_than_ : Joined<"-Wlarger-than-">, Alias<Wlarger_than>;
-def Wframe_larger_than : Separate<"-Wframe-larger-than">, Group<clang_ignored_f_Group>;
-def Wframe_larger_than_EQ : Joined<"-Wframe-larger-than=">, Alias<Wframe_larger_than>;
 
 def fterminated_vtables : Flag<"-fterminated-vtables">, Group<f_Group>;
 def fthreadsafe_statics : Flag<"-fthreadsafe-statics">, Group<f_Group>;
@@ -483,11 +464,9 @@ def m3dnow : Flag<"-m3dnow">, Group<m_x86_Features_Group>;
 def m64 : Flag<"-m64">, Group<m_Group>, Flags<[DriverOption]>;
 def mabi_EQ : Joined<"-mabi=">, Group<m_Group>, Flags<[DriverOption]>;
 def march_EQ : Joined<"-march=">, Group<m_Group>, Flags<[DriverOption]>;
-def mcmodel_EQ : Joined<"-mcmodel=">, Group<m_Group>, Flags<[DriverOption]>;
-def mconstant_cfstrings : Flag<"-mconstant-cfstrings">, Group<clang_ignored_m_Group>;
+def mcmodel_EQ : Joined<"-mcmodel=">, Group<m_Group>;
 def mcpu_EQ : Joined<"-mcpu=">, Group<m_Group>, Flags<[DriverOption]>;
 def mdynamic_no_pic : Joined<"-mdynamic-no-pic">, Group<m_Group>, Flags<[NoArgumentUnused]>;
-def mfix_and_continue : Flag<"-mfix-and-continue">, Group<clang_ignored_m_Group>;
 def mfloat_abi_EQ : Joined<"-mfloat-abi=">, Group<m_Group>;
 def mfpu_EQ : Joined<"-mfpu=">, Group<m_Group>;
 def mhard_float : Flag<"-mhard-float">, Group<m_Group>;
@@ -501,7 +480,6 @@ def mms_bitfields : Flag<"-mms-bitfields">, Group<m_Group>;
 def mmmx : Flag<"-mmmx">, Group<m_x86_Features_Group>;
 def mno_3dnowa : Flag<"-mno-3dnowa">, Group<m_x86_Features_Group>;
 def mno_3dnow : Flag<"-mno-3dnow">, Group<m_x86_Features_Group>;
-def mno_constant_cfstrings : Flag<"-mno-constant-cfstrings">, Group<m_Group>;
 def mno_mmx : Flag<"-mno-mmx">, Group<m_x86_Features_Group>;
 def mno_pascal_strings : Flag<"-mno-pascal-strings">, Group<m_Group>;
 def mno_red_zone : Flag<"-mno-red-zone">, Group<m_Group>;
@@ -813,3 +791,60 @@ def Z_reserved_lib_stdcxx : Flag<"-Z-reserved-lib-stdc++">,
     Flags<[LinkerInput, NoArgumentUnused, Unsupported]>, Group<reserved_lib_Group>;
 def Z_reserved_lib_cckext : Flag<"-Z-reserved-lib-cckext">,
     Flags<[LinkerInput, NoArgumentUnused, Unsupported]>, Group<reserved_lib_Group>;
+
+// Unsupported options.
+def Wframe_larger_than : Separate<"-Wframe-larger-than">, Flags<[Unsupported]>;
+def Wframe_larger_than_EQ : Joined<"-Wframe-larger-than=">, Alias<Wframe_larger_than>;
+def Wlarger_than : Separate<"-Wlarger-than">, Flags<[Unsupported]>;
+def Wlarger_than_ : Joined<"-Wlarger-than-">, Alias<Wlarger_than>;
+def Wlarger_than_EQ : Joined<"-Wlarger-than=">, Alias<Wlarger_than>;
+
+def fconserve_stack : Flag<"-fconserve-stack">, Flags<[Unsupported]>;
+def fno_conserve_stack : Flag<"-fno-conserve-stack">, Flags<[Unsupported]>;
+
+def ffast_math : Flag<"-ffast-math">, Flags<[Unsupported]>;
+def fno_fast_math : Flag<"-fno-fast-math">, Flags<[Unsupported]>;
+
+def ffinite_math_only : Flag<"-ffinite-math-only">, Flags<[Unsupported]>;
+def fno_finite_math_only : Flag<"-fno-finite-math-only">, Flags<[Unsupported]>;
+
+def finline : Flag<"-finline">, Flags<[Unsupported]>;
+def fno_inline : Flag<"-fno-inline">, Flags<[Unsupported]>;
+
+def finline_functions : Flag<"-finline-functions">, Flags<[Unsupported]>;
+def fno_inline_functions : Flag<"-fno-inline-functions">, Flags<[Unsupported]>;
+
+def fkeep_inline_functions : Flag<"-fkeep-inline-functions">, Flags<[Unsupported]>;
+def fno_keep_inline_functions : Flag<"-fno-keep-inline-functions">, Flags<[Unsupported]>;
+
+def fobjc_atdefs : Flag<"-fobjc-atdefs">, Flags<[Unsupported]>;
+def fno_objc_atdefs : Flag<"-fno-objc-atdefs">, Flags<[Unsupported]>;
+
+def fobjc_call_cxx_cdtors : Flag<"-fobjc-call-cxx-cdtors">, Flags<[Unsupported]>;
+def fno_objc_call_cxx_cdtors : Flag<"-fno-objc-call-cxx-cdtors">, Flags<[Unsupported]>;
+
+def fobjc_new_property : Flag<"-fobjc-new-property">, Flags<[Unsupported]>;
+def fno_objc_new_property : Flag<"-fno-objc-new-property">, Flags<[Unsupported]>;
+
+def foptimize_sibling_calls : Flag<"-foptimize-sibling-calls">, Flags<[Unsupported]>;
+def fno_optimize_sibling_calls : Flag<"-fno-optimize-sibling-calls">, Flags<[Unsupported]>;
+
+def frandom_seed_EQ : Joined<"-frandom-seed=">, Flags<[Unsupported]>;
+
+def freg_struct_return : Flag<"-freg-struct-return">, Flags<[Unsupported]>;
+def fno_reg_struct_return : Flag<"-fno-reg-struct-return">, Flags<[Unsupported]>;
+
+def freorder_blocks : Flag<"-freorder-blocks">, Flags<[Unsupported]>;
+def fno_reorder_blocks : Flag<"-fno-reorder-blocks">, Flags<[Unsupported]>;
+
+def fsched_interblock : Flag<"-fsched-interblock">, Flags<[Unsupported]>;
+def fno_sched_interblock : Flag<"-fno-sched-interblock">, Flags<[Unsupported]>;
+
+def maccumulate_outgoing_args : Flag<"-maccumulate-outgoing-args">, Flags<[Unsupported]>;
+def mno_accumulate_outgoing_args : Flag<"-mno-accumulate-outgoing-args">, Flags<[Unsupported]>;
+
+def mfix_and_continue : Flag<"-mfix-and-continue">, Flags<[Unsupported]>;
+def mno_fix_and_continue : Flag<"-mno-fix-and-continue">, Flags<[Unsupported]>;
+
+def mpreferred_stack_boundary_EQ : Joined<"-mpreferred-stack-boundary=">, Flags<[Unsupported]>;
+

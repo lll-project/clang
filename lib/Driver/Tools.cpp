@@ -1169,9 +1169,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // FIXME: Handle -mtune=.
   (void) Args.hasArg(options::OPT_mtune_EQ);
 
-  if (Arg *A = Args.getLastArg(options::OPT_mcmodel_EQ)) {
-    CmdArgs.push_back("-mcode-model");
-    CmdArgs.push_back(A->getValue(Args));
+  if (Args.getLastArg(options::OPT_mcmodel_EQ)) {
+    llvm::StringRef code_model = Args.getLastArgValue(options::OPT_mcmodel_EQ);
+    CmdArgs.push_back(Args.MakeArgString("-mcmodel=" + code_model));
   }
 
   // Add target specific cpu and features flags.
@@ -1411,7 +1411,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Forward -f (flag) options which we can pass directly.
   Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_behavior);
   Args.AddLastArg(CmdArgs, options::OPT_femit_all_decls);
-  Args.AddLastArg(CmdArgs, options::OPT_fheinous_gnu_extensions);
   Args.AddLastArg(CmdArgs, options::OPT_flimit_debug_info);
   if (getToolChain().SupportsProfiling())
     Args.AddLastArg(CmdArgs, options::OPT_pg);

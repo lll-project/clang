@@ -113,8 +113,6 @@ PCHValidator::ReadLanguageOptions(const LangOptions &LangOpts) {
   PARSE_LANGOPT_BENIGN(EmitAllDecls);
   PARSE_LANGOPT_IMPORTANT(MathErrno, diag::warn_pch_math_errno);
   PARSE_LANGOPT_BENIGN(getSignedOverflowBehavior());
-  PARSE_LANGOPT_IMPORTANT(HeinousExtensions,
-                          diag::warn_pch_heinous_extensions);
   // FIXME: Most of the options below are benign if the macro wasn't
   // used. Unfortunately, this means that a PCH compiled without
   // optimization can't be used with optimization turned on, even
@@ -2824,7 +2822,6 @@ bool ASTReader::ParseLanguageOptions(
     PARSE_LANGOPT(MathErrno);
     LangOpts.setSignedOverflowBehavior((LangOptions::SignedOverflowBehaviorTy)
                                        Record[Idx++]);
-    PARSE_LANGOPT(HeinousExtensions);
     PARSE_LANGOPT(Optimize);
     PARSE_LANGOPT(OptimizeSize);
     PARSE_LANGOPT(Static);

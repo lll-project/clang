@@ -139,7 +139,7 @@ def relaxed_aliasing : Flag<"-relaxed-aliasing">,
   HelpText<"Turn off Type Based Alias Analysis">;
 def masm_verbose : Flag<"-masm-verbose">,
   HelpText<"Generate verbose assembly output">;
-def mcode_model : Separate<"-mcode-model">,
+def mcmodel : Joined<"-mcmodel=">,
   HelpText<"The code model to use">;
 def mdebug_pass : Separate<"-mdebug-pass">,
   HelpText<"Enable additional debug output">;
@@ -418,7 +418,6 @@ def femit_all_decls : Flag<"-femit-all-decls">,
   HelpText<"Emit all declarations, even if unused">;
 def fblocks : Flag<"-fblocks">,
   HelpText<"enable the 'blocks' language feature">;
-def fheinous_gnu_extensions : Flag<"-fheinous-gnu-extensions">;
 def fexceptions : Flag<"-fexceptions">,
   HelpText<"Enable support for exception handling">;
 def fobjc_exceptions : Flag<"-fobjc-exceptions">,

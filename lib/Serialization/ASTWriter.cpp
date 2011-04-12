@@ -1048,7 +1048,6 @@ void ASTWriter::WriteLanguageOptions(const LangOptions &LangOpts) {
                                   // (modulo the platform support).
 
   Record.push_back(LangOpts.getSignedOverflowBehavior());
-  Record.push_back(LangOpts.HeinousExtensions);
 
   Record.push_back(LangOpts.Optimize); // Whether __OPTIMIZE__ should be defined.
   Record.push_back(LangOpts.OptimizeSize); // Whether __OPTIMIZE_SIZE__ should be

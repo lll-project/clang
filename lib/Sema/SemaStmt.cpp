@@ -1363,8 +1363,6 @@ Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
 
 /// CheckAsmLValue - GNU C has an extremely ugly extension whereby they silently
 /// ignore "noop" casts in places where an lvalue is required by an inline asm.
-/// We emulate this behavior when -fheinous-gnu-extensions is specified, but
-/// provide a strong guidance to not use it.
 ///
 /// This method checks to see if the argument is an acceptable l-value and
 /// returns false if it is a case we can handle.
@@ -1380,13 +1378,8 @@ static bool CheckAsmLValue(const Expr *E, Sema &S) {
   // are supposed to allow.
   const Expr *E2 = E->IgnoreParenNoopCasts(S.Context);
   if (E != E2 && E2->isLValue()) {
-    if (!S.getLangOptions().HeinousExtensions)
-      S.Diag(E2->getLocStart(), diag::err_invalid_asm_cast_lvalue)
-        << E->getSourceRange();
-    else
-      S.Diag(E2->getLocStart(), diag::warn_invalid_asm_cast_lvalue)
-        << E->getSourceRange();
-    // Accept, even if we emitted an error diagnostic.
+    S.Diag(E2->getLocStart(), diag::warn_invalid_asm_cast_lvalue)
+      << E->getSourceRange();
     return false;
   }
 

@@ -1026,10 +1026,10 @@ void Driver::BuildJobs(Compilation &C) const {
                        II);
   }
 
-  // If the user passed -Qunused-arguments or there were errors, don't warn
+  // If the user passed -Wno-unused-arguments or there were errors, don't warn
   // about any unused arguments.
   if (Diags.hasErrorOccurred() ||
-      C.getArgs().hasArg(options::OPT_Qunused_arguments))
+      C.getArgs().hasArg(options::OPT_Wno_unused_arguments))
     return;
 
   // Claim -### here.
@@ -1063,8 +1063,13 @@ void Driver::BuildJobs(Compilation &C) const {
           continue;
       }
 
-      Diag(clang::diag::warn_drv_unused_argument)
-        << A->getAsString(C.getArgs());
+      if (C.getArgs().hasArg(options::OPT_Werror_unused_arguments)) {
+        Diag(clang::diag::err_drv_unused_argument)
+          << A->getAsString(C.getArgs());
+      }
+      else
+        Diag(clang::diag::warn_drv_unused_argument)
+          << A->getAsString(C.getArgs());
     }
   }
 }

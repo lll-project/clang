@@ -74,8 +74,7 @@ public:
   unsigned MathErrno         : 1; // Math functions must respect errno
                                   // (modulo the platform support).
 
-  unsigned HeinousExtensions : 1; // Extensions that we really don't like and
-                                  // may be ripped out at any time.
+  unsigned GNUExtensions     : 1; // Lesser known GNU extensions
 
   unsigned Optimize          : 1; // Whether __OPTIMIZE__ should be defined.
   unsigned OptimizeSize      : 1; // Whether __OPTIMIZE_SIZE__ should be
@@ -177,7 +176,7 @@ public:
     NeXTRuntime = 1;
     RTTI = 1;
     LaxVectorConversions = 1;
-    HeinousExtensions = 0;
+    GNUExtensions = 0;
     AltiVec = OpenCL = CUDA = StackProtector = 0;
 
     SymbolVisibility = (unsigned) DefaultVisibility;
