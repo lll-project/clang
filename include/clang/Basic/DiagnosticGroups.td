@@ -170,6 +170,8 @@ def : DiagGroup<"variadic-macros">;
 def VariadicMacros : DiagGroup<"variadic-macros">;
 def VectorConversions : DiagGroup<"vector-conversions">;      // clang specific
 def VLA : DiagGroup<"vla">;
+def AsmCastLvalue : DiagGroup<"asm-cast-lvalue">;
+def AsmLabelOnAutoVar : DiagGroup<"asm-label-on-auto-var">;
 def VolatileRegisterVar : DiagGroup<"volatile-register-var">;
 def : DiagGroup<"write-strings">;
 def CharSubscript : DiagGroup<"char-subscripts">;
@@ -266,7 +268,7 @@ def CXX0xStaticNonIntegralInitializer :
 def CXX0x : DiagGroup<"c++0x-extensions", [CXX0xStaticNonIntegralInitializer]>;
 
 // A warning group for warnings about GCC extensions.
-def GNU : DiagGroup<"gnu", [GNUDesignator, VLA]>;
+def GNU : DiagGroup<"gnu", [GNUDesignator, AsmCastLvalue, AsmLabelOnAutoVar, VLA]>;
 
 // A warning group for warnings about Microsoft extensions.
 def Microsoft : DiagGroup<"microsoft">;
