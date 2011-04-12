@@ -1781,8 +1781,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // practical purposes.
   if (Arg *A = Args.getLastArg(options::OPT_funit_at_a_time,
                                options::OPT_fno_unit_at_a_time)) {
-    if (A->getOption().matches(options::OPT_fno_unit_at_a_time))
-      D.Diag(clang::diag::warn_drv_clang_unsupported) << A->getAsString(Args);
+    if (A->getOption().matches(options::OPT_fno_unit_at_a_time)) {
+    // TODO: handle unsupported options more generically
+      if (C.getArgs().hasArg(options::OPT_Werror_unused_arguments))
+        D.Diag(clang::diag::err_drv_clang_unsupported) << A->getAsString(Args);
+      else
+        D.Diag(clang::diag::warn_drv_clang_unsupported) << A->getAsString(Args);
+    }
   }
 
   // Default to -fno-builtin-str{cat,cpy} on Darwin for ARM.

@@ -13,20 +13,15 @@
 
 let Component = "Parse" in {
 
-def w_asm_qualifier_ignored : Warning<"ignored %0 qualifier on asm">,
-                              CatInlineAsm;
-def warn_file_asm_volatile : Warning<
-  "meaningless 'volatile' on asm outside function">, CatInlineAsm;
+def warn_asm_qualifier_ignored : Warning<"ignored %0 qualifier on asm">, InGroup<AsmQualifier>;
+def warn_file_asm_volatile : Warning<"meaningless 'volatile' on asm outside function">, InGroup<AsmQualifier>;
 
 let CategoryName = "Parse Issue" in {
 
 def ext_empty_source_file : Extension<"ISO C forbids an empty source file">;
-def ext_top_level_semi : Extension<
-  "extra ';' outside of a function">;
-def ext_extra_struct_semi : Extension<
-  "extra ';' inside a %0">;
-def ext_extra_ivar_semi : Extension<
-  "extra ';' inside instance variable list">;
+def ext_top_level_semi : Extension<"extra ';' outside of a function">;
+def ext_extra_struct_semi : Extension<"extra ';' inside a %0">;
+def ext_extra_ivar_semi : Extension<"extra ';' inside instance variable list">;
 
 def auto_storage_class : ExtWarn<
   "'auto' storage class specifier is redundant and will be "

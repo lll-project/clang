@@ -2411,11 +2411,19 @@ def warn_shift_result_overrides_sign_bit : Warning<
 
 def warn_precedence_bitwise_rel : Warning<
   "%0 has lower precedence than %1; %1 will be evaluated first">,
-  InGroup<Parentheses>;
+  InGroup<DiagGroup<"bitwise-precedence">>;
 def note_precedence_bitwise_first : Note<
   "place parentheses around the %0 expression to evaluate it first">;
 def note_precedence_bitwise_silence : Note<
   "place parentheses around the %0 expression to silence this warning">;
+
+def warn_equality_with_extra_parens : Warning<"equality comparison with "
+  "extraneous parentheses">, InGroup<DiagGroup<"equality-with-extra-parentheses">>;
+def note_equality_comparison_to_assign : Note<
+  "use '=' to turn this equality comparison into an assignment">;
+def note_equality_comparison_silence : Note<
+  "remove extraneous parentheses around the comparison to silence this warning">;
+
 
 def warn_logical_instead_of_bitwise : Warning<
   "use of logical %0 with constant operand; switch to bitwise %1 or "
@@ -3036,13 +3044,6 @@ def note_condition_or_assign_to_comparison : Note<
   "use '!=' to turn this compound assignment into an inequality comparison">;
 def note_condition_assign_silence : Note<
   "place parentheses around the assignment to silence this warning">;
-
-def warn_equality_with_extra_parens : Warning<"equality comparison with "
-  "extraneous parentheses">, InGroup<Parentheses>;
-def note_equality_comparison_to_assign : Note<
-  "use '=' to turn this equality comparison into an assignment">;
-def note_equality_comparison_silence : Note<
-  "remove extraneous parentheses around the comparison to silence this warning">;
 
 def warn_synthesized_ivar_access : Warning<
   "direct access of synthesized ivar by using property access %0">,

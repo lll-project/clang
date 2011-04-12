@@ -172,6 +172,7 @@ def VectorConversions : DiagGroup<"vector-conversions">;      // clang specific
 def VLA : DiagGroup<"vla">;
 def AsmCastLvalue : DiagGroup<"asm-cast-lvalue">;
 def AsmLabelOnAutoVar : DiagGroup<"asm-label-on-auto-var">;
+def AsmQualifier : DiagGroup<"asm-qualifier">;
 def VolatileRegisterVar : DiagGroup<"volatile-register-var">;
 def : DiagGroup<"write-strings">;
 def CharSubscript : DiagGroup<"char-subscripts">;
@@ -184,7 +185,9 @@ def DuplicateArgDecl : DiagGroup<"duplicate-method-arg">;
 // missing parentheses;  it is off by default.
 def Parentheses : DiagGroup<"parentheses",
                             [LogicalOpParentheses,
-                             DiagGroup<"idiomatic-parentheses">]>;
+                             DiagGroup<"idiomatic-parentheses">,
+                             DiagGroup<"equality-with-extra-parentheses">,
+                             DiagGroup<"bitwise-precedence">]>;
 
 // -Wconversion has its own warnings, but we split a few out for
 // legacy reasons:
@@ -272,3 +275,4 @@ def GNU : DiagGroup<"gnu", [GNUDesignator, AsmCastLvalue, AsmLabelOnAutoVar, VLA
 
 // A warning group for warnings about Microsoft extensions.
 def Microsoft : DiagGroup<"microsoft">;
+
