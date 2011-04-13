@@ -150,7 +150,7 @@ ToolChain *TCEHostInfo::CreateToolChain(const ArgList &Args,
                                         const char *ArchName) const {
   llvm::Triple TCTriple(getTriple());
 //  TCTriple.setArchName(ArchName);
-  return new toolchains::TCEToolChain(*this, TCTriple);
+  return new toolchains::TCE(*this, TCTriple);
 }
 
 

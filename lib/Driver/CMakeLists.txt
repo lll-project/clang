@@ -16,10 +16,27 @@ add_clang_library(clangDriver
   Phases.cpp
   Tool.cpp
   ToolChain.cpp
-  ToolChains.cpp
+  ToolChains/AuroraUX.cpp
+  ToolChains/Darwin.cpp
+  ToolChains/DarwinClang.cpp
+  ToolChains/DarwinGenericGCC.cpp
+  ToolChains/DragonFly.cpp
+  ToolChains/FreeBSD.cpp
+  ToolChains/GenericGCC.cpp
+  ToolChains/Linux.cpp
+  ToolChains/Minix.cpp
+  ToolChains/NetBSD.cpp
+  ToolChains/OpenBSD.cpp
+  ToolChains/TCE.cpp
+  ToolChains/Windows.cpp
   Tools.cpp
   Types.cpp
   )
 
-add_dependencies(clangDriver ClangAttrList ClangDiagnosticDriver
-                 ClangDriverOptions ClangCC1Options ClangCC1AsOptions)
+add_dependencies(clangDriver
+                 ClangAttrList
+                 ClangDiagnosticDriver
+                 ClangDriverOptions
+                 ClangCC1Options
+                 ClangCC1AsOptions)
+
