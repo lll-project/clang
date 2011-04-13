@@ -399,7 +399,6 @@ void Driver::PrintHelp(bool ShowHidden) const {
 void Driver::PrintVersion(const Compilation &C, llvm::raw_ostream &OS) const {
   // FIXME: The following handlers should use a callback mechanism, we don't
   // know what the client would like to do.
-  OS << getClangFullVersion() << '\n';
   const ToolChain &TC = C.getDefaultToolChain();
   OS << "Target: " << TC.getTripleString() << '\n';
 
@@ -407,6 +406,7 @@ void Driver::PrintVersion(const Compilation &C, llvm::raw_ostream &OS) const {
   //
   // FIXME: Implement correctly.
   OS << "Thread model: " << "posix" << '\n';
+  OS << getClangFullVersion() << '\n';
 }
 
 /// PrintDiagnosticCategories - Implement the --print-diagnostic-categories
