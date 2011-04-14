@@ -17,17 +17,18 @@ add_clang_library(clangBasic
   VersionTuple.cpp
   )
 
-# Determine Subversion revision.
-# FIXME: This only gets updated when CMake is run, so this revision number
-# may be out-of-date!
-if( NOT IS_SYMLINK "${CLANG_SOURCE_DIR}" )  # See PR 8437
-  find_package(Subversion)
-endif()
-if (Subversion_FOUND AND EXISTS "${CLANG_SOURCE_DIR}/.svn")
-  Subversion_WC_INFO(${CLANG_SOURCE_DIR} CLANG)
-  set_source_files_properties(Version.cpp
-    PROPERTIES COMPILE_DEFINITIONS "SVN_REVISION=\"${CLANG_WC_REVISION}\"")
-endif()
+execute_process(COMMAND ${LLVM_MAIN_SRC_DIR}/utils/GetSourceVersion
+                        ${LLVM_MAIN_SRC_DIR}
+                TIMEOUT 5
+                OUTPUT_VARIABLE SVN_REVISION)
+
+execute_process(COMMAND ${LLVM_MAIN_SRC_DIR}/utils/GetRepositoryPath
+                        ${LLVM_MAIN_SRC_DIR}
+                TIMEOUT 5
+                OUTPUT_VARIABLE SVN_REPOSITORY)
+
+add_definitions("-DSVN_REVISION=\"${SVN_REVISION}\"")
+add_definitions("-DSVN_REPOSITORY=\"${SVN_REPOSITORY}\"")
 
 add_dependencies(clangBasic 
                  ClangARMNeon
@@ -41,4 +42,4 @@ add_dependencies(clangBasic
                  ClangDiagnosticLex
                  ClangDiagnosticParse
                  ClangDiagnosticSema)
-                 
+
