@@ -61,7 +61,7 @@ Driver::Driver(llvm::StringRef _ClangExecutable,
   : Opts(createDriverOptTable()), Diags(_Diags),
     ClangExecutable(_ClangExecutable), UseStdLib(true),
     DefaultHostTriple(_DefaultHostTriple), DefaultImageName(_DefaultImageName),
-    DriverTitle("clang \"gcc-compatible\" driver"),
+    DriverTitle("clang \"linux-kernel-compatible\" driver"),
     Host(0),
     CCPrintOptionsFilename(0), CCPrintHeadersFilename(0),
     CCLogDiagnosticsFilename(0), CCCIsCXX(false),
@@ -85,7 +85,9 @@ Driver::Driver(llvm::StringRef _ClangExecutable,
       CCCUseClangCXX = false;
   }
 
-  Name = llvm::sys::path::stem(ClangExecutable);
+  // if llvm::sys::path::stem is used, the version number gets mangled, e.g.
+  // clang-2.9 becomes clang-2 
+  Name = ClangExecutable;
   Dir  = llvm::sys::path::parent_path(ClangExecutable);
 
   // Compute the path to the resource directory.
