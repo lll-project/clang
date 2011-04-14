@@ -2,7 +2,7 @@
 # standalone project, using LLVM as an external library:
 if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
   project(Clang)
-  cmake_minimum_required(VERSION 2.8)
+  cmake_minimum_required(VERSION 2.6.4)
 
   set(CLANG_PATH_TO_LLVM_SOURCE "" CACHE PATH
     "Path to LLVM source code. Not necessary if using an installed LLVM.")
@@ -83,7 +83,6 @@ endif()
 # Compute the Clang version from the LLVM version.
 string(REGEX MATCH "[0-9]+\\.[0-9]+(\\.[0-9]+)?" CLANG_VERSION
   ${PACKAGE_VERSION})
-message(STATUS "Clang version: ${CLANG_VERSION}")
 
 string(REGEX REPLACE "([0-9]+)\\.[0-9]+(\\.[0-9]+)?" "\\1" CLANG_VERSION_MAJOR
   ${CLANG_VERSION})
