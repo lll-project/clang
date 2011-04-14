@@ -269,8 +269,7 @@ TargetInfo::getNormalizedGCCRegisterName(llvm::StringRef Name) const {
 }
 
 bool TargetInfo::validateOutputConstraint(ConstraintInfo &Info) const {
-  char const* Name = Info.getConstraintStr().c_str();
-  char const* PrevName = Name;
+  const char *Name = Info.getConstraintStr().c_str();
   // An output constraint must start with '=' or '+'
   if (*Name != '=' && *Name != '+')
     return false;
@@ -288,19 +287,11 @@ bool TargetInfo::validateOutputConstraint(ConstraintInfo &Info) const {
         // Eventually, an unknown constraint should just be treated as 'g'.
         return false;
       }
+    case '&': // early clobber.
+      break;
     case '%': // commutative.
       // FIXME: Check that there is a another register after this one.
       break;
-    case '+': // FIXME: kludgy patch to compile linux 
-    case '=':
-    case '&':
-      if (Name == PrevName)
-        return false;
-      break;
-    case 'O': // FIXME: more hackery for the linux kernel
-    case 'P':
-      break;
-    case 'p': // FIXME: incredibly kludgy hackery
     case 'r': // general register.
       Info.setAllowsRegister();
       break;
