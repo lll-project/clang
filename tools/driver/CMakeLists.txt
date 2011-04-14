@@ -57,4 +57,6 @@ install(TARGETS clang
   RUNTIME DESTINATION bin)
 
 # Create the clang++ symlink at installation time.
-install(SCRIPT clang_symlink.cmake -DCMAKE_INSTALL_PREFIX=\"${CMAKE_INSTALL_PREFIX}\")
+install(SCRIPT clang_symlink.cmake -DCMAKE_INSTALL_PREFIX=\"${CMAKE_INSTALL_PREFIX}\"
+                                   -DCMAKE_EXECUTABLE_SUFFIX=\"${CMAKE_EXECUTABLE_SUFFIX}\")
+
