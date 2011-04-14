@@ -27,13 +27,11 @@ set( LLVM_LINK_COMPONENTS
   selectiondag
   )
 
-add_clang_executable(clang
+add_clang_executable(clang-${CLANG_VERSION}
   driver.cpp
   cc1_main.cpp
   cc1as_main.cpp
   )
-
-set_target_properties(clang PROPERTIES VERSION ${CLANG_EXECUTABLE_VERSION})
 
 if(UNIX)
   set(CLANGXX_LINK_OR_COPY create_symlink)
@@ -42,21 +40,29 @@ else()
 endif()
 
 # Create the clang++ symlink in the build directory.
-set(clang_pp "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang++${CMAKE_EXECUTABLE_SUFFIX}")
-add_custom_target(clang++ ALL
+set(clang_pp "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang++-${CLANG_VERSION}")
+add_custom_target(clang++-${CLANG_VERSION} ALL
   ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY}
-    "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang${CMAKE_EXECUTABLE_SUFFIX}"
+    "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang-${CLANG_VERSION}"
     "${clang_pp}"
-  DEPENDS clang)
-set_target_properties(clang++ PROPERTIES FOLDER "Clang executables")
+  DEPENDS clang-${CLANG_VERSION})
+set_target_properties(clang++-${CLANG_VERSION} PROPERTIES FOLDER "Clang executables")
 
 set_property(DIRECTORY APPEND
   PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${clang_pp})
 
-install(TARGETS clang
+install(TARGETS clang-${CLANG_VERSION}
   RUNTIME DESTINATION bin)
 
 # Create the clang++ symlink at installation time.
-install(SCRIPT clang_symlink.cmake -DCMAKE_INSTALL_PREFIX=\"${CMAKE_INSTALL_PREFIX}\"
-                                   -DCMAKE_EXECUTABLE_SUFFIX=\"${CMAKE_EXECUTABLE_SUFFIX}\")
+install(CODE
+  "set(bindir \"${CMAKE_INSTALL_PREFIX}/bin/\")
+   execute_process(
+     COMMAND \"\${CMAKE_COMMAND}\" -E ${CLANGXX_LINK_OR_COPY}
+             \"clang-${CLANG_VERSION}\" \"clang++\"
+     WORKING_DIRECTORY \"\${bindir}\")
+   execute_process(
+     COMMAND \"\${CMAKE_COMMAND}\" -E ${CLANGXX_LINK_OR_COPY}
+             \"clang-${CLANG_VERSION}\" \"clang++-${CLANG_VERSION}\"
+     WORKING_DIRECTORY \"\${bindir}\")")
 
