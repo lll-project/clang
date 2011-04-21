@@ -1172,9 +1172,17 @@ DEF_TRAVERSE_DECL(ObjCProtocolDecl, {
   })
 
 DEF_TRAVERSE_DECL(ObjCMethodDecl, {
-    // We don't traverse nodes in param_begin()/param_end(), as they
-    // appear in decls_begin()/decls_end() and thus are handled.
-    TRY_TO(TraverseStmt(D->getBody()));
+    if (D->getResultTypeSourceInfo()) {
+      TRY_TO(TraverseTypeLoc(D->getResultTypeSourceInfo()->getTypeLoc()));
+    }
+    for (ObjCMethodDecl::param_iterator
+           I = D->param_begin(), E = D->param_end(); I != E; ++I) {
+      TRY_TO(TraverseDecl(*I));
+    }
+    if (D->isThisDeclarationADefinition()) {
+      TRY_TO(TraverseStmt(D->getBody()));
+    }
+    return true;
   })
 
 DEF_TRAVERSE_DECL(ObjCPropertyDecl, {
@@ -1346,6 +1354,13 @@ DEF_TRAVERSE_DECL(TypedefDecl, {
     TRY_TO(TraverseTypeLoc(D->getTypeSourceInfo()->getTypeLoc()));
     // We shouldn't traverse D->getTypeForDecl(); it's a result of
     // declaring the typedef, not something that was written in the
+    // source.
+  })
+
+DEF_TRAVERSE_DECL(TypeAliasDecl, {
+    TRY_TO(TraverseTypeLoc(D->getTypeSourceInfo()->getTypeLoc()));
+    // We shouldn't traverse D->getTypeForDecl(); it's a result of
+    // declaring the type alias, not something that was written in the
     // source.
   })
 
@@ -1688,6 +1703,7 @@ DEF_TRAVERSE_STMT(ObjCAtSynchronizedStmt, { })
 DEF_TRAVERSE_STMT(ObjCAtThrowStmt, { })
 DEF_TRAVERSE_STMT(ObjCAtTryStmt, { })
 DEF_TRAVERSE_STMT(ObjCForCollectionStmt, { })
+DEF_TRAVERSE_STMT(CXXForRangeStmt, { })
 DEF_TRAVERSE_STMT(ReturnStmt, { })
 DEF_TRAVERSE_STMT(SwitchStmt, { })
 DEF_TRAVERSE_STMT(WhileStmt, { })
@@ -1764,6 +1780,22 @@ bool RecursiveASTVisitor<Derived>::TraverseInitListExpr(InitListExpr *S) {
   // All we need are the default actions.  FIXME: use a helper function.
   for (Stmt::child_range range = S->children(); range; ++range) {
     TRY_TO(TraverseStmt(*range));
+  }
+  return true;
+}
+
+// GenericSelectionExpr is a special case because the types and expressions
+// are interleaved.  We also need to watch out for null types (default
+// generic associations).
+template<typename Derived>
+bool RecursiveASTVisitor<Derived>::
+TraverseGenericSelectionExpr(GenericSelectionExpr *S) {
+  TRY_TO(WalkUpFromGenericSelectionExpr(S));
+  TRY_TO(TraverseStmt(S->getControllingExpr()));
+  for (unsigned i = 0; i != S->getNumAssocs(); ++i) {
+    if (TypeSourceInfo *TS = S->getAssocTypeSourceInfo(i))
+      TRY_TO(TraverseTypeLoc(TS->getTypeLoc()));
+    TRY_TO(TraverseStmt(S->getAssocExpr(i)));
   }
   return true;
 }

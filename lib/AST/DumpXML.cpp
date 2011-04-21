@@ -543,9 +543,17 @@ struct XMLDumper : public XMLDeclVisitor<XMLDumper>,
 
   // TypedefDecl
   void visitTypedefDeclAttrs(TypedefDecl *D) {
-    visitRedeclarableAttrs(D);
+    visitRedeclarableAttrs<TypedefNameDecl>(D);
   }
   void visitTypedefDeclChildren(TypedefDecl *D) {
+    dispatch(D->getTypeSourceInfo()->getTypeLoc());
+  }
+
+  // TypeAliasDecl
+  void visitTypeAliasDeclAttrs(TypeAliasDecl *D) {
+    visitRedeclarableAttrs<TypedefNameDecl>(D);
+  }
+  void visitTypeAliasDeclChildren(TypeAliasDecl *D) {
     dispatch(D->getTypeSourceInfo()->getTypeLoc());
   }
 
@@ -911,6 +919,8 @@ struct XMLDumper : public XMLDeclVisitor<XMLDumper>,
     case CC_X86StdCall: return set("cc", "x86_stdcall");
     case CC_X86ThisCall: return set("cc", "x86_thiscall");
     case CC_X86Pascal: return set("cc", "x86_pascal");
+    case CC_AAPCS: return set("cc", "aapcs");
+    case CC_AAPCS_VFP: return set("cc", "aapcs_vfp");
     }
   }
 

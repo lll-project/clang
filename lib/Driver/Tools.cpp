@@ -34,6 +34,13 @@
 #include "InputInfo.h"
 #include "ToolChains.h"
 
+#ifdef __CYGWIN__
+#include <cygwin/version.h>
+#if defined(CYGWIN_VERSION_DLL_MAJOR) && CYGWIN_VERSION_DLL_MAJOR<1007
+#define IS_CYGWIN15 1
+#endif
+#endif
+
 using namespace clang::driver;
 using namespace clang::driver::tools;
 
@@ -320,7 +327,7 @@ void Clang::AddPreprocessingOptions(const Driver &D,
   }
 }
 
-/// getARMTargetCPU - Get the (LLVM) name of the ARM cpu we are targetting.
+/// getARMTargetCPU - Get the (LLVM) name of the ARM cpu we are targeting.
 //
 // FIXME: tblgen this.
 static const char *getARMTargetCPU(const ArgList &Args,
@@ -612,6 +619,12 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
 
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-arm-strict-align");
+
+    // The kext linker doesn't know how to deal with movw/movt.
+#ifndef DISABLE_ARM_DARWIN_USE_MOVT
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back("-arm-darwin-use-movt=0");
+#endif
   }
 }
 
@@ -1450,6 +1463,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(A->getValue(Args));
   }
 
+  // Forward -ftrap_function= options to the backend.
+  if (Arg *A = Args.getLastArg(options::OPT_ftrap_function_EQ)) {
+    llvm::StringRef FuncName = A->getValue(Args);
+    CmdArgs.push_back("-backend-option");
+    CmdArgs.push_back(Args.MakeArgString("-trap-func=" + FuncName));
+  }
+
   // -fno-strict-overflow implies -fwrapv if it isn't disabled, but
   // -fstrict-overflow won't turn off an explicitly enabled -fwrapv.
   if (Arg *A = Args.getLastArg(options::OPT_fwrapv,
@@ -1722,6 +1742,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (!Args.hasFlag(options::OPT_fdiagnostics_fixit_info,
                     options::OPT_fno_diagnostics_fixit_info))
     CmdArgs.push_back("-fno-diagnostics-fixit-info");
+  
+  // Enable -fdiagnostics-show-name by default.
+  if (Args.hasFlag(options::OPT_fdiagnostics_show_name,
+                   options::OPT_fno_diagnostics_show_name, false))
+    CmdArgs.push_back("-fdiagnostics-show-name");
 
   // Enable -fdiagnostics-show-option by default.
   if (Args.hasFlag(options::OPT_fdiagnostics_show_option,
@@ -2062,7 +2087,20 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  const char *GCCName = getToolChain().getDriver().getCCCGenericGCCName().c_str();
+  const std::string customGCCName = D.getCCCGenericGCCName();
+  const char *GCCName;
+  if (!customGCCName.empty())
+    GCCName = customGCCName.c_str();
+  else if (D.CCCIsCXX) {
+#ifdef IS_CYGWIN15
+    // FIXME: Detect the version of Cygwin at runtime?
+    GCCName = "g++-4";
+#else
+    GCCName = "g++";
+#endif
+  } else
+    GCCName = "gcc";
+
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
@@ -2581,11 +2619,16 @@ void darwin::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
   assert(Inputs.size() == 1 && "Unexpected number of inputs.");
   const InputInfo &Input = Inputs[0];
 
-  // Bit of a hack, this is only used for original inputs.
-  //
-  // FIXME: This is broken for preprocessed .s inputs.
-  if (Input.isFilename() &&
-      strcmp(Input.getFilename(), Input.getBaseInput()) == 0) {
+  // Determine the original source input.
+  const Action *SourceAction = &JA;
+  while (SourceAction->getKind() != Action::InputClass) {
+    assert(!SourceAction->getInputs().empty() && "unexpected root action!");
+    SourceAction = SourceAction->getInputs()[0];
+  }
+
+  // Forward -g, assuming we are dealing with an actual assembly file.
+  if (SourceAction->getType() == types::TY_Asm || 
+      SourceAction->getType() == types::TY_PP_Asm) {
     if (Args.hasArg(options::OPT_gstabs))
       CmdArgs.push_back("--gstabs");
     else if (Args.hasArg(options::OPT_g_Group))
@@ -3701,9 +3744,9 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
              ToolChain.getArch() == llvm::Triple::thumb)
       CmdArgs.push_back("/lib/ld-linux.so.3");
     else if (ToolChain.getArch() == llvm::Triple::ppc)
-      CmdArgs.push_back("/lib/ld.so");
+      CmdArgs.push_back("/lib/ld.so.1");
     else if (ToolChain.getArch() == llvm::Triple::ppc64)
-      CmdArgs.push_back("/lib64/ld64.so");
+      CmdArgs.push_back("/lib64/ld64.so.1");
     else
       CmdArgs.push_back("/lib64/ld-linux-x86-64.so.2");
   }

@@ -122,6 +122,7 @@ namespace clang {
     void VisitShuffleVectorExpr(ShuffleVectorExpr *E);
     void VisitBlockExpr(BlockExpr *E);
     void VisitBlockDeclRefExpr(BlockDeclRefExpr *E);
+    void VisitGenericSelectionExpr(GenericSelectionExpr *E);
     void VisitObjCStringLiteral(ObjCStringLiteral *E);
     void VisitObjCEncodeExpr(ObjCEncodeExpr *E);
     void VisitObjCSelectorExpr(ObjCSelectorExpr *E);
@@ -141,6 +142,7 @@ namespace clang {
     // C++ Statements
     void VisitCXXCatchStmt(CXXCatchStmt *S);
     void VisitCXXTryStmt(CXXTryStmt *S);
+    void VisitCXXForRangeStmt(CXXForRangeStmt *);
 
     void VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E);
     void VisitCXXConstructExpr(CXXConstructExpr *E);
@@ -468,7 +470,8 @@ void ASTStmtReader::VisitStringLiteral(StringLiteral *E) {
   assert(Record[Idx] == E->getNumConcatenated() &&
          "Wrong number of concatenated tokens!");
   ++Idx;
-  E->setWide(Record[Idx++]);
+  E->IsWide = Record[Idx++];
+  E->IsPascal = Record[Idx++];
 
   // Read string data
   llvm::SmallString<16> Str(&Record[Idx], &Record[Idx] + Len);
@@ -687,8 +690,11 @@ void ASTStmtReader::VisitInitListExpr(InitListExpr *E) {
   E->setSyntacticForm(cast_or_null<InitListExpr>(Reader.ReadSubStmt()));
   E->setLBraceLoc(ReadSourceLocation(Record, Idx));
   E->setRBraceLoc(ReadSourceLocation(Record, Idx));
-  E->setInitializedFieldInUnion(
-                      cast_or_null<FieldDecl>(Reader.GetDecl(Record[Idx++])));
+  if (Record[Idx++]) // isArrayFiller
+    E->ArrayFillerOrUnionFieldInit = Reader.ReadSubExpr();
+  else
+    E->ArrayFillerOrUnionFieldInit
+        = cast_or_null<FieldDecl>(Reader.GetDecl(Record[Idx++]));
   E->sawArrayRangeDesignator(Record[Idx++]);
 }
 
@@ -818,6 +824,25 @@ void ASTStmtReader::VisitBlockDeclRefExpr(BlockDeclRefExpr *E) {
   E->setLocation(ReadSourceLocation(Record, Idx));
   E->setByRef(Record[Idx++]);
   E->setConstQualAdded(Record[Idx++]);
+}
+
+void ASTStmtReader::VisitGenericSelectionExpr(GenericSelectionExpr *E) {
+  VisitExpr(E);
+  E->NumAssocs = Record[Idx++];
+  E->AssocTypes = new (*Reader.getContext()) TypeSourceInfo*[E->NumAssocs];
+  E->SubExprs =
+   new(*Reader.getContext()) Stmt*[GenericSelectionExpr::END_EXPR+E->NumAssocs];
+
+  E->SubExprs[GenericSelectionExpr::CONTROLLING] = Reader.ReadSubExpr();
+  for (unsigned I = 0, N = E->getNumAssocs(); I != N; ++I) {
+    E->AssocTypes[I] = GetTypeSourceInfo(Record, Idx);
+    E->SubExprs[GenericSelectionExpr::END_EXPR+I] = Reader.ReadSubExpr();
+  }
+  E->ResultIndex = Record[Idx++];
+
+  E->GenericLoc = ReadSourceLocation(Record, Idx);
+  E->DefaultLoc = ReadSourceLocation(Record, Idx);
+  E->RParenLoc = ReadSourceLocation(Record, Idx);
 }
 
 //===----------------------------------------------------------------------===//
@@ -996,6 +1021,19 @@ void ASTStmtReader::VisitCXXTryStmt(CXXTryStmt *S) {
   S->getStmts()[0] = Reader.ReadSubStmt();
   for (unsigned i = 0, e = S->getNumHandlers(); i != e; ++i)
     S->getStmts()[i + 1] = Reader.ReadSubStmt();
+}
+
+void ASTStmtReader::VisitCXXForRangeStmt(CXXForRangeStmt *S) {
+  VisitStmt(S);
+  S->setForLoc(ReadSourceLocation(Record, Idx));
+  S->setColonLoc(ReadSourceLocation(Record, Idx));
+  S->setRParenLoc(ReadSourceLocation(Record, Idx));
+  S->setRangeStmt(Reader.ReadSubStmt());
+  S->setBeginEndStmt(Reader.ReadSubStmt());
+  S->setCond(Reader.ReadSubExpr());
+  S->setInc(Reader.ReadSubExpr());
+  S->setLoopVarStmt(Reader.ReadSubStmt());
+  S->setBody(Reader.ReadSubStmt());
 }
 
 void ASTStmtReader::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
@@ -1268,6 +1306,8 @@ void ASTStmtReader::VisitUnresolvedMemberExpr(UnresolvedMemberExpr *E) {
 void ASTStmtReader::VisitUnresolvedLookupExpr(UnresolvedLookupExpr *E) {
   VisitOverloadExpr(E);
   E->RequiresADL = Record[Idx++];
+  if (E->RequiresADL)
+    E->StdIsAssociatedNamespace = Record[Idx++];
   E->Overloaded = Record[Idx++];
   E->NamingClass = cast_or_null<CXXRecordDecl>(Reader.GetDecl(Record[Idx++]));
 }
@@ -1679,6 +1719,10 @@ Stmt *ASTReader::ReadStmtFromStream(PerFileData &F) {
       S = new (Context) BlockDeclRefExpr(Empty);
       break;
 
+    case EXPR_GENERIC_SELECTION:
+      S = new (Context) GenericSelectionExpr(Empty);
+      break;
+
     case EXPR_OBJC_STRING_LITERAL:
       S = new (Context) ObjCStringLiteral(Empty);
       break;
@@ -1735,6 +1779,10 @@ Stmt *ASTReader::ReadStmtFromStream(PerFileData &F) {
     case STMT_CXX_TRY:
       S = CXXTryStmt::Create(*Context, Empty,
              /*NumHandlers=*/Record[ASTStmtReader::NumStmtFields]);
+      break;
+
+    case STMT_CXX_FOR_RANGE:
+      S = new (Context) CXXForRangeStmt(Empty);
       break;
 
     case EXPR_CXX_OPERATOR_CALL:

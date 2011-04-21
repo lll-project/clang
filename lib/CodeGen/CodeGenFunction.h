@@ -42,6 +42,7 @@ namespace clang {
   class APValue;
   class ASTContext;
   class CXXDestructorDecl;
+  class CXXForRangeStmt;
   class CXXTryStmt;
   class Decl;
   class LabelDecl;
@@ -768,6 +769,11 @@ public:
   /// block through the normal cleanup handling code (if any) and then
   /// on to \arg Dest.
   void EmitBranchThroughCleanup(JumpDest Dest);
+  
+  /// isObviouslyBranchWithoutCleanups - Return true if a branch to the
+  /// specified destination obviously has no cleanups to run.  'false' is always
+  /// a conservatively correct answer for this method.
+  bool isObviouslyBranchWithoutCleanups(JumpDest Dest) const;
 
   /// EmitBranchThroughEHCleanup - Emit a branch from the current
   /// insert block through the EH cleanup handling code (if any) and
@@ -1698,6 +1704,7 @@ public:
   void ExitCXXTryStmt(const CXXTryStmt &S, bool IsFnTryBlock = false);
 
   void EmitCXXTryStmt(const CXXTryStmt &S);
+  void EmitCXXForRangeStmt(const CXXForRangeStmt &S);
 
   //===--------------------------------------------------------------------===//
   //                         LValue Expression Emission
@@ -1793,7 +1800,7 @@ public:
   LValue EmitComplexAssignmentLValue(const BinaryOperator *E);
   LValue EmitComplexCompoundAssignmentLValue(const CompoundAssignOperator *E);
 
-  // Note: only availabe for agg return types
+  // Note: only available for agg return types
   LValue EmitBinaryOperatorLValue(const BinaryOperator *E);
   LValue EmitCompoundAssignmentLValue(const CompoundAssignOperator *E);
   // Note: only available for agg return types

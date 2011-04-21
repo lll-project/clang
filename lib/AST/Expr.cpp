@@ -35,18 +35,16 @@ using namespace clang;
 /// but also int expressions which are produced by things like comparisons in
 /// C.
 bool Expr::isKnownToHaveBooleanValue() const {
+  const Expr *E = IgnoreParens();
+
   // If this value has _Bool type, it is obvious 0/1.
-  if (getType()->isBooleanType()) return true;
+  if (E->getType()->isBooleanType()) return true;
   // If this is a non-scalar-integer type, we don't care enough to try. 
-  if (!getType()->isIntegralOrEnumerationType()) return false;
+  if (!E->getType()->isIntegralOrEnumerationType()) return false;
   
-  if (const ParenExpr *PE = dyn_cast<ParenExpr>(this))
-    return PE->getSubExpr()->isKnownToHaveBooleanValue();
-  
-  if (const UnaryOperator *UO = dyn_cast<UnaryOperator>(this)) {
+  if (const UnaryOperator *UO = dyn_cast<UnaryOperator>(E)) {
     switch (UO->getOpcode()) {
     case UO_Plus:
-    case UO_Extension:
       return UO->getSubExpr()->isKnownToHaveBooleanValue();
     default:
       return false;
@@ -55,10 +53,10 @@ bool Expr::isKnownToHaveBooleanValue() const {
   
   // Only look through implicit casts.  If the user writes
   // '(int) (a && b)' treat it as an arbitrary int.
-  if (const ImplicitCastExpr *CE = dyn_cast<ImplicitCastExpr>(this))
+  if (const ImplicitCastExpr *CE = dyn_cast<ImplicitCastExpr>(E))
     return CE->getSubExpr()->isKnownToHaveBooleanValue();
   
-  if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(this)) {
+  if (const BinaryOperator *BO = dyn_cast<BinaryOperator>(E)) {
     switch (BO->getOpcode()) {
     default: return false;
     case BO_LT:   // Relational operators.
@@ -84,7 +82,7 @@ bool Expr::isKnownToHaveBooleanValue() const {
     }
   }
   
-  if (const ConditionalOperator *CO = dyn_cast<ConditionalOperator>(this))
+  if (const ConditionalOperator *CO = dyn_cast<ConditionalOperator>(E))
     return CO->getTrueExpr()->isKnownToHaveBooleanValue() &&
            CO->getFalseExpr()->isKnownToHaveBooleanValue();
   
@@ -511,7 +509,7 @@ double FloatingLiteral::getValueAsApproximateDouble() const {
 
 StringLiteral *StringLiteral::Create(ASTContext &C, const char *StrData,
                                      unsigned ByteLength, bool Wide,
-                                     QualType Ty,
+                                     bool Pascal, QualType Ty,
                                      const SourceLocation *Loc,
                                      unsigned NumStrs) {
   // Allocate enough space for the StringLiteral plus an array of locations for
@@ -527,6 +525,7 @@ StringLiteral *StringLiteral::Create(ASTContext &C, const char *StrData,
   SL->StrData = AStrData;
   SL->ByteLength = ByteLength;
   SL->IsWide = Wide;
+  SL->IsPascal = Pascal;
   SL->TokLocs[0] = Loc[0];
   SL->NumConcatenated = NumStrs;
 
@@ -1055,8 +1054,6 @@ const char *CastExpr::getCastKindName() const {
     return "IntegralComplexCast";
   case CK_IntegralComplexToFloatingComplex:
     return "IntegralComplexToFloatingComplex";
-  case CK_ResolveUnknownAnyType:
-    return "ResolveUnknownAnyType";
   }
 
   llvm_unreachable("Unhandled cast kind!");
@@ -1257,7 +1254,7 @@ InitListExpr::InitListExpr(ASTContext &C, SourceLocation lbraceloc,
          false),
     InitExprs(C, numInits),
     LBraceLoc(lbraceloc), RBraceLoc(rbraceloc), SyntacticForm(0),
-    UnionFieldInit(0), HadArrayRangeDesignator(false) 
+    HadArrayRangeDesignator(false) 
 {      
   for (unsigned I = 0; I != numInits; ++I) {
     if (initExprs[I]->isTypeDependent())
@@ -1363,6 +1360,9 @@ bool Expr::isUnusedResultAWarning(SourceLocation &Loc, SourceRange &R1,
     return true;
   case ParenExprClass:
     return cast<ParenExpr>(this)->getSubExpr()->
+      isUnusedResultAWarning(Loc, R1, R2, Ctx);
+  case GenericSelectionExprClass:
+    return cast<GenericSelectionExpr>(this)->getResultExpr()->
       isUnusedResultAWarning(Loc, R1, R2, Ctx);
   case UnaryOperatorClass: {
     const UnaryOperator *UO = cast<UnaryOperator>(this);
@@ -1574,21 +1574,20 @@ bool Expr::isUnusedResultAWarning(SourceLocation &Loc, SourceRange &R1,
 /// isOBJCGCCandidate - Check if an expression is objc gc'able.
 /// returns true, if it is; false otherwise.
 bool Expr::isOBJCGCCandidate(ASTContext &Ctx) const {
-  switch (getStmtClass()) {
+  const Expr *E = IgnoreParens();
+  switch (E->getStmtClass()) {
   default:
     return false;
   case ObjCIvarRefExprClass:
     return true;
   case Expr::UnaryOperatorClass:
-    return cast<UnaryOperator>(this)->getSubExpr()->isOBJCGCCandidate(Ctx);
-  case ParenExprClass:
-    return cast<ParenExpr>(this)->getSubExpr()->isOBJCGCCandidate(Ctx);
+    return cast<UnaryOperator>(E)->getSubExpr()->isOBJCGCCandidate(Ctx);
   case ImplicitCastExprClass:
-    return cast<ImplicitCastExpr>(this)->getSubExpr()->isOBJCGCCandidate(Ctx);
+    return cast<ImplicitCastExpr>(E)->getSubExpr()->isOBJCGCCandidate(Ctx);
   case CStyleCastExprClass:
-    return cast<CStyleCastExpr>(this)->getSubExpr()->isOBJCGCCandidate(Ctx);
+    return cast<CStyleCastExpr>(E)->getSubExpr()->isOBJCGCCandidate(Ctx);
   case DeclRefExprClass: {
-    const Decl *D = cast<DeclRefExpr>(this)->getDecl();
+    const Decl *D = cast<DeclRefExpr>(E)->getDecl();
     if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
       if (VD->hasGlobalStorage())
         return true;
@@ -1601,11 +1600,11 @@ bool Expr::isOBJCGCCandidate(ASTContext &Ctx) const {
     return false;
   }
   case MemberExprClass: {
-    const MemberExpr *M = cast<MemberExpr>(this);
+    const MemberExpr *M = cast<MemberExpr>(E);
     return M->getBase()->isOBJCGCCandidate(Ctx);
   }
   case ArraySubscriptExprClass:
-    return cast<ArraySubscriptExpr>(this)->getBase()->isOBJCGCCandidate(Ctx);
+    return cast<ArraySubscriptExpr>(E)->getBase()->isOBJCGCCandidate(Ctx);
   }
 }
 
@@ -1828,6 +1827,11 @@ Expr::CanThrowResult Expr::CanThrow(ASTContext &C) const {
       return CT_Dependent;
     return cast<ChooseExpr>(this)->getChosenSubExpr(C)->CanThrow(C);
 
+  case GenericSelectionExprClass:
+    if (cast<GenericSelectionExpr>(this)->isResultDependent())
+      return CT_Dependent;
+    return cast<GenericSelectionExpr>(this)->getResultExpr()->CanThrow(C);
+
     // Some expressions are always dependent.
   case DependentScopeDeclRefExprClass:
   case CXXUnresolvedConstructExprClass:
@@ -1854,6 +1858,12 @@ Expr* Expr::IgnoreParens() {
         continue;
       }
     }
+    if (GenericSelectionExpr* P = dyn_cast<GenericSelectionExpr>(E)) {
+      if (!P->isResultDependent()) {
+        E = P->getResultExpr();
+        continue;
+      }
+    }
     return E;
   }
 }
@@ -1874,6 +1884,12 @@ Expr *Expr::IgnoreParenCasts() {
     if (UnaryOperator* P = dyn_cast<UnaryOperator>(E)) {
       if (P->getOpcode() == UO_Extension) {
         E = P->getSubExpr();
+        continue;
+      }
+    }
+    if (GenericSelectionExpr* P = dyn_cast<GenericSelectionExpr>(E)) {
+      if (!P->isResultDependent()) {
+        E = P->getResultExpr();
         continue;
       }
     }
@@ -1901,6 +1917,11 @@ Expr *Expr::IgnoreParenLValueCasts() {
         E = P->getSubExpr();
         continue;
       }
+    } else if (GenericSelectionExpr* P = dyn_cast<GenericSelectionExpr>(E)) {
+      if (!P->isResultDependent()) {
+        E = P->getResultExpr();
+        continue;
+      }
     }
     break;
   }
@@ -1921,6 +1942,12 @@ Expr *Expr::IgnoreParenImpCasts() {
     if (UnaryOperator* P = dyn_cast<UnaryOperator>(E)) {
       if (P->getOpcode() == UO_Extension) {
         E = P->getSubExpr();
+        continue;
+      }
+    }
+    if (GenericSelectionExpr* P = dyn_cast<GenericSelectionExpr>(E)) {
+      if (!P->isResultDependent()) {
+        E = P->getResultExpr();
         continue;
       }
     }
@@ -1962,6 +1989,13 @@ Expr *Expr::IgnoreParenNoopCasts(ASTContext &Ctx) {
     if (UnaryOperator* P = dyn_cast<UnaryOperator>(E)) {
       if (P->getOpcode() == UO_Extension) {
         E = P->getSubExpr();
+        continue;
+      }
+    }
+
+    if (GenericSelectionExpr* P = dyn_cast<GenericSelectionExpr>(E)) {
+      if (!P->isResultDependent()) {
+        E = P->getResultExpr();
         continue;
       }
     }
@@ -2157,6 +2191,11 @@ bool Expr::isConstantInitializer(ASTContext &Ctx, bool IsForRef) const {
   case ParenExprClass:
     return cast<ParenExpr>(this)->getSubExpr()
       ->isConstantInitializer(Ctx, IsForRef);
+  case GenericSelectionExprClass:
+    if (cast<GenericSelectionExpr>(this)->isResultDependent())
+      return false;
+    return cast<GenericSelectionExpr>(this)->getResultExpr()
+      ->isConstantInitializer(Ctx, IsForRef);
   case ChooseExprClass:
     return cast<ChooseExpr>(this)->getChosenSubExpr(Ctx)
       ->isConstantInitializer(Ctx, IsForRef);
@@ -2243,6 +2282,9 @@ Expr::isNullPointerConstant(ASTContext &Ctx,
     // Accept ((void*)0) as a null pointer constant, as many other
     // implementations do.
     return PE->getSubExpr()->isNullPointerConstant(Ctx, NPC);
+  } else if (const GenericSelectionExpr *GE =
+               dyn_cast<GenericSelectionExpr>(this)) {
+    return GE->getResultExpr()->isNullPointerConstant(Ctx, NPC);
   } else if (const CXXDefaultArgExpr *DefaultArg
                = dyn_cast<CXXDefaultArgExpr>(this)) {
     // See through default argument expressions
@@ -2639,6 +2681,51 @@ void ShuffleVectorExpr::setExprs(ASTContext &C, Expr ** Exprs,
   SubExprs = new (C) Stmt* [NumExprs];
   this->NumExprs = NumExprs;
   memcpy(SubExprs, Exprs, sizeof(Expr *) * NumExprs);
+}
+
+GenericSelectionExpr::GenericSelectionExpr(ASTContext &Context,
+                               SourceLocation GenericLoc, Expr *ControllingExpr,
+                               TypeSourceInfo **AssocTypes, Expr **AssocExprs,
+                               unsigned NumAssocs, SourceLocation DefaultLoc,
+                               SourceLocation RParenLoc,
+                               bool ContainsUnexpandedParameterPack,
+                               unsigned ResultIndex)
+  : Expr(GenericSelectionExprClass,
+         AssocExprs[ResultIndex]->getType(),
+         AssocExprs[ResultIndex]->getValueKind(),
+         AssocExprs[ResultIndex]->getObjectKind(),
+         AssocExprs[ResultIndex]->isTypeDependent(),
+         AssocExprs[ResultIndex]->isValueDependent(),
+         ContainsUnexpandedParameterPack),
+    AssocTypes(new (Context) TypeSourceInfo*[NumAssocs]),
+    SubExprs(new (Context) Stmt*[END_EXPR+NumAssocs]), NumAssocs(NumAssocs),
+    ResultIndex(ResultIndex), GenericLoc(GenericLoc), DefaultLoc(DefaultLoc),
+    RParenLoc(RParenLoc) {
+  SubExprs[CONTROLLING] = ControllingExpr;
+  std::copy(AssocTypes, AssocTypes+NumAssocs, this->AssocTypes);
+  std::copy(AssocExprs, AssocExprs+NumAssocs, SubExprs+END_EXPR);
+}
+
+GenericSelectionExpr::GenericSelectionExpr(ASTContext &Context,
+                               SourceLocation GenericLoc, Expr *ControllingExpr,
+                               TypeSourceInfo **AssocTypes, Expr **AssocExprs,
+                               unsigned NumAssocs, SourceLocation DefaultLoc,
+                               SourceLocation RParenLoc,
+                               bool ContainsUnexpandedParameterPack)
+  : Expr(GenericSelectionExprClass,
+         Context.DependentTy,
+         VK_RValue,
+         OK_Ordinary,
+         /*isTypeDependent=*/  true,
+         /*isValueDependent=*/ true,
+         ContainsUnexpandedParameterPack),
+    AssocTypes(new (Context) TypeSourceInfo*[NumAssocs]),
+    SubExprs(new (Context) Stmt*[END_EXPR+NumAssocs]), NumAssocs(NumAssocs),
+    ResultIndex(-1U), GenericLoc(GenericLoc), DefaultLoc(DefaultLoc),
+    RParenLoc(RParenLoc) {
+  SubExprs[CONTROLLING] = ControllingExpr;
+  std::copy(AssocTypes, AssocTypes+NumAssocs, this->AssocTypes);
+  std::copy(AssocExprs, AssocExprs+NumAssocs, SubExprs+END_EXPR);
 }
 
 //===----------------------------------------------------------------------===//

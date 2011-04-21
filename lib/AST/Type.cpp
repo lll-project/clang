@@ -1169,6 +1169,8 @@ llvm::StringRef FunctionType::getNameForCallConv(CallingConv CC) {
   case CC_X86FastCall: return "fastcall";
   case CC_X86ThisCall: return "thiscall";
   case CC_X86Pascal: return "pascal";
+  case CC_AAPCS: return "aapcs";
+  case CC_AAPCS_VFP: return "aapcs-vfp";
   }
 
   llvm_unreachable("Invalid calling convention.");
@@ -1576,7 +1578,7 @@ static CachedProperties computeCachedProperties(const Type *T) {
     NamedDecl::LinkageInfo LV = Tag->getLinkageAndVisibility();
     bool IsLocalOrUnnamed =
       Tag->getDeclContext()->isFunctionOrMethod() ||
-      (!Tag->getIdentifier() && !Tag->getTypedefForAnonDecl());
+      (!Tag->getIdentifier() && !Tag->getTypedefNameForAnonDecl());
     return CachedProperties(LV.linkage(), LV.visibility(), IsLocalOrUnnamed);
   }
 

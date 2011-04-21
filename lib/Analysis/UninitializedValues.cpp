@@ -390,16 +390,11 @@ public:
   void VisitBinaryOperator(BinaryOperator *bo);
   void VisitCastExpr(CastExpr *ce);
   void VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *se);
+  void VisitCXXTypeidExpr(CXXTypeidExpr *E);
   void BlockStmt_VisitObjCForCollectionStmt(ObjCForCollectionStmt *fs);
   
   bool isTrackedVar(const VarDecl *vd) {
-#if 1
-    // FIXME: This is a temporary workaround to deal with the fact
-    // that DeclContext's do not always contain all of their variables!
-    return vals.hasEntry(vd);
-#else
     return ::isTrackedVar(vd, cast<DeclContext>(ac.getDecl()));
-#endif
   }
   
   FindVarResult findBlockVarDecl(Expr *ex);
@@ -615,6 +610,17 @@ void TransferFunctions::VisitUnaryExprOrTypeTraitExpr(
       return;
     // Handle VLAs.
     Visit(se->getArgumentExpr());
+  }
+}
+
+void TransferFunctions::VisitCXXTypeidExpr(CXXTypeidExpr *E) {
+  // typeid(expression) is potentially evaluated when the argument is
+  // a glvalue of polymorphic type. (C++ 5.2.8p2-3)
+  if (!E->isTypeOperand() && E->Classify(ac.getASTContext()).isGLValue()) {
+    QualType SubExprTy = E->getExprOperand()->getType();
+    if (const RecordType *Record = SubExprTy->getAs<RecordType>())
+      if (cast<CXXRecordDecl>(Record->getDecl())->isPolymorphic())
+        Visit(E->getExprOperand());
   }
 }
 

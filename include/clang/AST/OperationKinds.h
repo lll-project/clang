@@ -245,10 +245,7 @@ enum CastKind {
 
   /// \brief Converts from an integral complex to a floating complex.
   ///   _Complex unsigned -> _Complex float
-  CK_IntegralComplexToFloatingComplex,
-
-  /// \brief Assign an unknown-any declaration a type.
-  CK_ResolveUnknownAnyType
+  CK_IntegralComplexToFloatingComplex
 };
 
 #define CK_Invalid ((CastKind) -1)

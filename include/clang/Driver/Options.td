@@ -275,6 +275,7 @@ def fdiagnostics_fixit_info : Flag<"-fdiagnostics-fixit-info">, Group<f_clang_Gr
 def fdiagnostics_print_source_range_info : Flag<"-fdiagnostics-print-source-range-info">, Group<f_clang_Group>;
 def fdiagnostics_parseable_fixits : Flag<"-fdiagnostics-parseable-fixits">, Group<f_clang_Group>;
 def fdiagnostics_show_option : Flag<"-fdiagnostics-show-option">, Group<f_Group>;
+def fdiagnostics_show_name : Flag<"-fdiagnostics-show-name">, Group<f_Group>;
 def fdiagnostics_show_note_include_stack : Flag<"-fdiagnostics-show-note-include-stack">, Group<f_Group>;
 def fdiagnostics_show_category_EQ : Joined<"-fdiagnostics-show-category=">, Group<f_clang_Group>;
 def fdollars_in_identifiers : Flag<"-fdollars-in-identifiers">, Group<f_Group>;
@@ -301,6 +302,7 @@ def flimit_debug_info : Flag<"-flimit-debug-info">, Group<f_Group>,
   HelpText<"Limit debug information produced to reduce size of debug binary">;
 def flimited_precision_EQ : Joined<"-flimited-precision=">, Group<f_Group>;
 def flto : Flag<"-flto">, Group<f_Group>;
+def fno_lto : Flag<"-fno-lto">, Group<f_Group>;
 def fmacro_backtrace_limit_EQ : Joined<"-fmacro-backtrace-limit=">,
                                 Group<f_Group>;
 def fmath_errno : Flag<"-fmath-errno">, Group<f_Group>;
@@ -328,6 +330,7 @@ def fno_constant_cfstrings : Flag<"-fno-constant-cfstrings">, Group<f_Group>;
 def mno_constant_cfstrings : Flag<"-mno-constant-cfstrings">, Alias<fno_constant_cfstrings>;
 def fno_cxx_exceptions: Flag<"-fno-cxx-exceptions">, Group<f_Group>;
 def fno_diagnostics_fixit_info : Flag<"-fno-diagnostics-fixit-info">, Group<f_Group>;
+def fno_diagnostics_show_name : Flag<"-fno-diagnostics-show-name">, Group<f_Group>;
 def fno_diagnostics_show_option : Flag<"-fno-diagnostics-show-option">, Group<f_Group>;
 def fno_diagnostics_show_note_include_stack : Flag<"-fno-diagnostics-show-note-include-stack">, Group<f_Group>;
 def fno_dollars_in_identifiers : Flag<"-fno-dollars-in-identifiers">, Group<f_Group>;
@@ -416,6 +419,8 @@ def fthreadsafe_statics : Flag<"-fthreadsafe-statics">, Group<f_Group>;
 def ftime_report : Flag<"-ftime-report">, Group<f_Group>;
 def ftrapv : Flag<"-ftrapv">, Group<f_Group>;
 def ftrapv_handler_EQ : Joined<"-ftrapv-handler=">, Group<f_Group>;
+def ftrap_function_EQ : Joined<"-ftrap-function=">, Group<f_Group>,
+  HelpText<"Issue call to specified function rather than a trap instruction">;
 def funit_at_a_time : Flag<"-funit-at-a-time">, Group<f_Group>;
 def funroll_loops : Flag<"-funroll-loops">, Group<f_Group>;
 def funsigned_bitfields : Flag<"-funsigned-bitfields">, Group<f_Group>;
@@ -462,10 +467,10 @@ def m32 : Flag<"-m32">, Group<m_Group>, Flags<[DriverOption]>;
 def m3dnowa : Flag<"-m3dnowa">, Group<m_x86_Features_Group>;
 def m3dnow : Flag<"-m3dnow">, Group<m_x86_Features_Group>;
 def m64 : Flag<"-m64">, Group<m_Group>, Flags<[DriverOption]>;
-def mabi_EQ : Joined<"-mabi=">, Group<m_Group>, Flags<[DriverOption]>;
-def march_EQ : Joined<"-march=">, Group<m_Group>, Flags<[DriverOption]>;
+def mabi_EQ : Joined<"-mabi=">, Group<m_Group>;
+def march_EQ : Joined<"-march=">, Group<m_Group>;
 def mcmodel_EQ : Joined<"-mcmodel=">, Group<m_Group>;
-def mcpu_EQ : Joined<"-mcpu=">, Group<m_Group>, Flags<[DriverOption]>;
+def mcpu_EQ : Joined<"-mcpu=">, Group<m_Group>;
 def mdynamic_no_pic : Joined<"-mdynamic-no-pic">, Group<m_Group>, Flags<[NoArgumentUnused]>;
 def mfloat_abi_EQ : Joined<"-mfloat-abi=">, Group<m_Group>;
 def mfpu_EQ : Joined<"-mfpu=">, Group<m_Group>;

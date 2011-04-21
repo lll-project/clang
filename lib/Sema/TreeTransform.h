@@ -669,7 +669,7 @@ public:
   QualType RebuildUnresolvedUsingType(Decl *D);
 
   /// \brief Build a new typedef type.
-  QualType RebuildTypedefType(TypedefDecl *Typedef) {
+  QualType RebuildTypedefType(TypedefNameDecl *Typedef) {
     return SemaRef.Context.getTypeDeclType(Typedef);
   }
 
@@ -851,7 +851,8 @@ public:
 	  NamedDecl *SomeDecl = Result.getRepresentativeDecl();
           unsigned Kind = 0;
           if (isa<TypedefDecl>(SomeDecl)) Kind = 1;
-          else if (isa<ClassTemplateDecl>(SomeDecl)) Kind = 2;
+          else if (isa<TypeAliasDecl>(SomeDecl)) Kind = 2;
+          else if (isa<ClassTemplateDecl>(SomeDecl)) Kind = 3;
           SemaRef.Diag(IdLoc, diag::err_tag_reference_non_tag) << Kind;
           SemaRef.Diag(SomeDecl->getLocation(), diag::note_declared_at);
           break;
@@ -1203,8 +1204,11 @@ public:
                                 SourceLocation StartLoc,
                                 SourceLocation IdLoc,
                                 IdentifierInfo *Id) {
-    return getSema().BuildExceptionDeclaration(0, Declarator,
-                                               StartLoc, IdLoc, Id);
+    VarDecl *Var = getSema().BuildExceptionDeclaration(0, Declarator,
+                                                       StartLoc, IdLoc, Id);
+    if (Var)
+      getSema().CurContext->addDecl(Var);
+    return Var;
   }
 
   /// \brief Build a new C++ catch statement.
@@ -1228,6 +1232,28 @@ public:
     return getSema().ActOnCXXTryBlock(TryLoc, TryBlock, move(Handlers));
   }
 
+  /// \brief Build a new C++0x range-based for statement.
+  ///
+  /// By default, performs semantic analysis to build the new statement.
+  /// Subclasses may override this routine to provide different behavior.
+  StmtResult RebuildCXXForRangeStmt(SourceLocation ForLoc,
+                                    SourceLocation ColonLoc,
+                                    Stmt *Range, Stmt *BeginEnd,
+                                    Expr *Cond, Expr *Inc,
+                                    Stmt *LoopVar,
+                                    SourceLocation RParenLoc) {
+    return getSema().BuildCXXForRangeStmt(ForLoc, ColonLoc, Range, BeginEnd,
+                                          Cond, Inc, LoopVar, RParenLoc);
+  }
+  
+  /// \brief Attach body to a C++0x range-based for statement.
+  ///
+  /// By default, performs semantic analysis to finish the new statement.
+  /// Subclasses may override this routine to provide different behavior.
+  StmtResult FinishCXXForRangeStmt(Stmt *ForRange, Stmt *Body) {
+    return getSema().FinishCXXForRangeStmt(ForRange, Body);
+  }
+  
   /// \brief Build a new expression that references a declaration.
   ///
   /// By default, performs semantic analysis to build the new expression.
@@ -1373,11 +1399,13 @@ public:
       assert(Member->getType()->isRecordType() &&
              "unnamed member not of record type?");
 
-      if (getSema().PerformObjectMemberConversion(Base, 
-                                        QualifierLoc.getNestedNameSpecifier(),
-                                                  FoundDecl, Member))
+      ExprResult BaseResult =
+        getSema().PerformObjectMemberConversion(Base, 
+                                                QualifierLoc.getNestedNameSpecifier(),
+                                                FoundDecl, Member);
+      if (BaseResult.isInvalid())
         return ExprError();
-
+      Base = BaseResult.take();
       ExprValueKind VK = isArrow ? VK_LValue : Base->getValueKind();
       MemberExpr *ME =
         new (getSema().Context) MemberExpr(Base, isArrow,
@@ -1390,7 +1418,10 @@ public:
     CXXScopeSpec SS;
     SS.Adopt(QualifierLoc);
 
-    getSema().DefaultFunctionArrayConversion(Base);
+    ExprResult BaseResult = getSema().DefaultFunctionArrayConversion(Base);
+    if (BaseResult.isInvalid())
+      return ExprError();
+    Base = BaseResult.take();
     QualType BaseType = Base->getType();
 
     // FIXME: this involves duplicating earlier analysis in a lot of
@@ -1570,6 +1601,22 @@ public:
     return SemaRef.ActOnChooseExpr(BuiltinLoc,
                                    Cond, LHS, RHS,
                                    RParenLoc);
+  }
+
+  /// \brief Build a new generic selection expression.
+  ///
+  /// By default, performs semantic analysis to build the new expression.
+  /// Subclasses may override this routine to provide different behavior.
+  ExprResult RebuildGenericSelectionExpr(SourceLocation KeyLoc,
+                                         SourceLocation DefaultLoc,
+                                         SourceLocation RParenLoc,
+                                         Expr *ControllingExpr,
+                                         TypeSourceInfo **Types,
+                                         Expr **Exprs,
+                                         unsigned NumAssocs) {
+    return getSema().CreateGenericSelectionExpr(KeyLoc, DefaultLoc, RParenLoc,
+                                                ControllingExpr, Types, Exprs,
+                                                NumAssocs);
   }
 
   /// \brief Build a new overloaded operator call expression.
@@ -2060,20 +2107,20 @@ public:
                                           bool IsArrow, bool IsFreeIvar) {
     // FIXME: We lose track of the IsFreeIvar bit.
     CXXScopeSpec SS;
-    Expr *Base = BaseArg;
+    ExprResult Base = getSema().Owned(BaseArg);
     LookupResult R(getSema(), Ivar->getDeclName(), IvarLoc,
                    Sema::LookupMemberName);
     ExprResult Result = getSema().LookupMemberExpr(R, Base, IsArrow,
                                                          /*FIME:*/IvarLoc,
                                                          SS, 0,
                                                          false);
-    if (Result.isInvalid())
+    if (Result.isInvalid() || Base.isInvalid())
       return ExprError();
     
     if (Result.get())
       return move(Result);
     
-    return getSema().BuildMemberReferenceExpr(Base, Base->getType(),
+    return getSema().BuildMemberReferenceExpr(Base.get(), Base.get()->getType(),
                                               /*FIXME:*/IvarLoc, IsArrow, SS, 
                                               /*FirstQualifierInScope=*/0,
                                               R, 
@@ -2088,20 +2135,20 @@ public:
                                               ObjCPropertyDecl *Property,
                                               SourceLocation PropertyLoc) {
     CXXScopeSpec SS;
-    Expr *Base = BaseArg;
+    ExprResult Base = getSema().Owned(BaseArg);
     LookupResult R(getSema(), Property->getDeclName(), PropertyLoc,
                    Sema::LookupMemberName);
     bool IsArrow = false;
     ExprResult Result = getSema().LookupMemberExpr(R, Base, IsArrow,
                                                          /*FIME:*/PropertyLoc,
                                                          SS, 0, false);
-    if (Result.isInvalid())
+    if (Result.isInvalid() || Base.isInvalid())
       return ExprError();
     
     if (Result.get())
       return move(Result);
     
-    return getSema().BuildMemberReferenceExpr(Base, Base->getType(),
+    return getSema().BuildMemberReferenceExpr(Base.get(), Base.get()->getType(),
                                               /*FIXME:*/PropertyLoc, IsArrow, 
                                               SS, 
                                               /*FirstQualifierInScope=*/0,
@@ -2132,19 +2179,19 @@ public:
   ExprResult RebuildObjCIsaExpr(Expr *BaseArg, SourceLocation IsaLoc,
                                       bool IsArrow) {
     CXXScopeSpec SS;
-    Expr *Base = BaseArg;
+    ExprResult Base = getSema().Owned(BaseArg);
     LookupResult R(getSema(), &getSema().Context.Idents.get("isa"), IsaLoc,
                    Sema::LookupMemberName);
     ExprResult Result = getSema().LookupMemberExpr(R, Base, IsArrow,
                                                          /*FIME:*/IsaLoc,
                                                          SS, 0, false);
-    if (Result.isInvalid())
+    if (Result.isInvalid() || Base.isInvalid())
       return ExprError();
     
     if (Result.get())
       return move(Result);
     
-    return getSema().BuildMemberReferenceExpr(Base, Base->getType(),
+    return getSema().BuildMemberReferenceExpr(Base.get(), Base.get()->getType(),
                                               /*FIXME:*/IsaLoc, IsArrow, SS, 
                                               /*FirstQualifierInScope=*/0,
                                               R, 
@@ -2167,28 +2214,25 @@ public:
 
     // Build a reference to the __builtin_shufflevector builtin
     FunctionDecl *Builtin = cast<FunctionDecl>(*Lookup.first);
-    Expr *Callee
-      = new (SemaRef.Context) DeclRefExpr(Builtin, Builtin->getType(),
-                                          VK_LValue, BuiltinLoc);
-    SemaRef.UsualUnaryConversions(Callee);
+    ExprResult Callee
+      = SemaRef.Owned(new (SemaRef.Context) DeclRefExpr(Builtin, Builtin->getType(),
+                                                        VK_LValue, BuiltinLoc));
+    Callee = SemaRef.UsualUnaryConversions(Callee.take());
+    if (Callee.isInvalid())
+      return ExprError();
 
     // Build the CallExpr
     unsigned NumSubExprs = SubExprs.size();
     Expr **Subs = (Expr **)SubExprs.release();
-    CallExpr *TheCall = new (SemaRef.Context) CallExpr(SemaRef.Context, Callee,
+    ExprResult TheCall = SemaRef.Owned(
+      new (SemaRef.Context) CallExpr(SemaRef.Context, Callee.take(),
                                                        Subs, NumSubExprs,
                                                    Builtin->getCallResultType(),
                             Expr::getValueKindForType(Builtin->getResultType()),
-                                                       RParenLoc);
-    ExprResult OwnedCall(SemaRef.Owned(TheCall));
+                                     RParenLoc));
 
     // Type-check the __builtin_shufflevector expression.
-    ExprResult Result = SemaRef.SemaBuiltinShuffleVector(TheCall);
-    if (Result.isInvalid())
-      return ExprError();
-
-    OwnedCall.release();
-    return move(Result);
+    return SemaRef.SemaBuiltinShuffleVector(cast<CallExpr>(TheCall.take()));
   }
 
   /// \brief Build a new template argument pack expansion.
@@ -3938,9 +3982,9 @@ template<typename Derived>
 QualType TreeTransform<Derived>::TransformTypedefType(TypeLocBuilder &TLB,
                                                       TypedefTypeLoc TL) {
   const TypedefType *T = TL.getTypePtr();
-  TypedefDecl *Typedef
-    = cast_or_null<TypedefDecl>(getDerived().TransformDecl(TL.getNameLoc(),
-                                                           T->getDecl()));
+  TypedefNameDecl *Typedef
+    = cast_or_null<TypedefNameDecl>(getDerived().TransformDecl(TL.getNameLoc(),
+                                                               T->getDecl()));
   if (!Typedef)
     return QualType();
 
@@ -5350,6 +5394,61 @@ TreeTransform<Derived>::TransformCXXTryStmt(CXXTryStmt *S) {
                                         move_arg(Handlers));
 }
 
+template<typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformCXXForRangeStmt(CXXForRangeStmt *S) {
+  StmtResult Range = getDerived().TransformStmt(S->getRangeStmt());
+  if (Range.isInvalid())
+    return StmtError();
+
+  StmtResult BeginEnd = getDerived().TransformStmt(S->getBeginEndStmt());
+  if (BeginEnd.isInvalid())
+    return StmtError();
+
+  ExprResult Cond = getDerived().TransformExpr(S->getCond());
+  if (Cond.isInvalid())
+    return StmtError();
+
+  ExprResult Inc = getDerived().TransformExpr(S->getInc());
+  if (Inc.isInvalid())
+    return StmtError();
+
+  StmtResult LoopVar = getDerived().TransformStmt(S->getLoopVarStmt());
+  if (LoopVar.isInvalid())
+    return StmtError();
+
+  StmtResult NewStmt = S;
+  if (getDerived().AlwaysRebuild() ||
+      Range.get() != S->getRangeStmt() ||
+      BeginEnd.get() != S->getBeginEndStmt() ||
+      Cond.get() != S->getCond() ||
+      Inc.get() != S->getInc() ||
+      LoopVar.get() != S->getLoopVarStmt())
+    NewStmt = getDerived().RebuildCXXForRangeStmt(S->getForLoc(),
+                                                  S->getColonLoc(), Range.get(),
+                                                  BeginEnd.get(), Cond.get(),
+                                                  Inc.get(), LoopVar.get(),
+                                                  S->getRParenLoc());
+
+  StmtResult Body = getDerived().TransformStmt(S->getBody());
+  if (Body.isInvalid())
+    return StmtError();
+
+  // Body has changed but we didn't rebuild the for-range statement. Rebuild
+  // it now so we have a new statement to attach the body to.
+  if (Body.get() != S->getBody() && NewStmt.get() == S)
+    NewStmt = getDerived().RebuildCXXForRangeStmt(S->getForLoc(),
+                                                  S->getColonLoc(), Range.get(),
+                                                  BeginEnd.get(), Cond.get(),
+                                                  Inc.get(), LoopVar.get(),
+                                                  S->getRParenLoc());
+
+  if (NewStmt.get() == S)
+    return SemaRef.Owned(S);
+
+  return FinishCXXForRangeStmt(NewStmt.get(), Body.get());
+}
+
 //===----------------------------------------------------------------------===//
 // Expression transformation
 //===----------------------------------------------------------------------===//
@@ -5439,6 +5538,42 @@ template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCharacterLiteral(CharacterLiteral *E) {
   return SemaRef.Owned(E);
+}
+
+template<typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformGenericSelectionExpr(GenericSelectionExpr *E) {
+  ExprResult ControllingExpr =
+    getDerived().TransformExpr(E->getControllingExpr());
+  if (ControllingExpr.isInvalid())
+    return ExprError();
+
+  llvm::SmallVector<Expr *, 4> AssocExprs;
+  llvm::SmallVector<TypeSourceInfo *, 4> AssocTypes;
+  for (unsigned i = 0; i != E->getNumAssocs(); ++i) {
+    TypeSourceInfo *TS = E->getAssocTypeSourceInfo(i);
+    if (TS) {
+      TypeSourceInfo *AssocType = getDerived().TransformType(TS);
+      if (!AssocType)
+        return ExprError();
+      AssocTypes.push_back(AssocType);
+    } else {
+      AssocTypes.push_back(0);
+    }
+
+    ExprResult AssocExpr = getDerived().TransformExpr(E->getAssocExpr(i));
+    if (AssocExpr.isInvalid())
+      return ExprError();
+    AssocExprs.push_back(AssocExpr.release());
+  }
+
+  return getDerived().RebuildGenericSelectionExpr(E->getGenericLoc(),
+                                                  E->getDefaultLoc(),
+                                                  E->getRParenLoc(),
+                                                  ControllingExpr.release(),
+                                                  AssocTypes.data(),
+                                                  AssocExprs.data(),
+                                                  E->getNumAssocs());
 }
 
 template<typename Derived>

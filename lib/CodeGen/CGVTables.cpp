@@ -2254,9 +2254,51 @@ void VTableBuilder::dumpLayout(llvm::raw_ostream& Out) {
       }
       
       Out << '\n';
-
     }
   }
+
+  // Compute the vtable indices for all the member functions.
+  // Store them in a map keyed by the index so we'll get a sorted table.
+  std::map<uint64_t, std::string> IndicesMap;
+
+  for (CXXRecordDecl::method_iterator i = MostDerivedClass->method_begin(),
+       e = MostDerivedClass->method_end(); i != e; ++i) {
+    const CXXMethodDecl *MD = *i;
+    
+    // We only want virtual member functions.
+    if (!MD->isVirtual())
+      continue;
+
+    std::string MethodName =
+      PredefinedExpr::ComputeName(PredefinedExpr::PrettyFunctionNoVirtual,
+                                  MD);
+
+    if (const CXXDestructorDecl *DD = dyn_cast<CXXDestructorDecl>(MD)) {
+      IndicesMap[VTables.getMethodVTableIndex(GlobalDecl(DD, Dtor_Complete))] =
+        MethodName + " [complete]";
+      IndicesMap[VTables.getMethodVTableIndex(GlobalDecl(DD, Dtor_Deleting))] =
+        MethodName + " [deleting]";
+    } else {
+      IndicesMap[VTables.getMethodVTableIndex(MD)] = MethodName;
+    }
+  }
+
+  // Print the vtable indices for all the member functions.
+  if (!IndicesMap.empty()) {
+    Out << "VTable indices for '";
+    Out << MostDerivedClass->getQualifiedNameAsString();
+    Out << "' (" << IndicesMap.size() << " entries).\n";
+
+    for (std::map<uint64_t, std::string>::const_iterator I = IndicesMap.begin(),
+         E = IndicesMap.end(); I != E; ++I) {
+      uint64_t VTableIndex = I->first;
+      const std::string &MethodName = I->second;
+
+      Out << llvm::format(" %4u | ", VTableIndex) << MethodName << '\n';
+    }
+  }
+
+  Out << '\n';
 }
   
 }
@@ -2264,14 +2306,16 @@ void VTableBuilder::dumpLayout(llvm::raw_ostream& Out) {
 static void 
 CollectPrimaryBases(const CXXRecordDecl *RD, ASTContext &Context,
                     VTableBuilder::PrimaryBasesSetVectorTy &PrimaryBases) {
-  while (RD) {
-    const ASTRecordLayout &Layout = Context.getASTRecordLayout(RD);
-    const CXXRecordDecl *PrimaryBase = Layout.getPrimaryBase();
-    if (PrimaryBase)
-      PrimaryBases.insert(PrimaryBase);
+  const ASTRecordLayout &Layout = Context.getASTRecordLayout(RD);
+  const CXXRecordDecl *PrimaryBase = Layout.getPrimaryBase();
 
-    RD = PrimaryBase;
-  }
+  if (!PrimaryBase)
+    return;
+
+  CollectPrimaryBases(PrimaryBase, Context, PrimaryBases);
+
+  if (!PrimaryBases.insert(PrimaryBase))
+    assert(false && "Found a duplicate primary base!");
 }
 
 void CodeGenVTables::ComputeMethodVTableIndices(const CXXRecordDecl *RD) {

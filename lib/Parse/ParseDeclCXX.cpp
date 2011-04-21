@@ -253,7 +253,7 @@ Decl *Parser::ParseUsingDirectiveOrDeclaration(unsigned Context,
     return ParseUsingDirective(Context, UsingLoc, DeclEnd, attrs);
   }
 
-  // Otherwise, it must be a using-declaration.
+  // Otherwise, it must be a using-declaration or an alias-declaration.
 
   // Using declarations can't have attributes.
   ProhibitAttributes(attrs);
@@ -323,13 +323,16 @@ Decl *Parser::ParseUsingDirective(unsigned Context,
                                      IdentLoc, NamespcName, attrs.getList());
 }
 
-/// ParseUsingDeclaration - Parse C++ using-declaration. Assumes that
-/// 'using' was already seen.
+/// ParseUsingDeclaration - Parse C++ using-declaration or alias-declaration.
+/// Assumes that 'using' was already seen.
 ///
 ///     using-declaration: [C++ 7.3.p3: namespace.udecl]
 ///       'using' 'typename'[opt] ::[opt] nested-name-specifier
 ///               unqualified-id
 ///       'using' :: unqualified-id
+///
+///     alias-declaration: C++0x [decl.typedef]p2
+///       'using' identifier = type-id ;
 ///
 Decl *Parser::ParseUsingDeclaration(unsigned Context,
                                     const ParsedTemplateInfo &TemplateInfo,
@@ -339,10 +342,6 @@ Decl *Parser::ParseUsingDeclaration(unsigned Context,
   CXXScopeSpec SS;
   SourceLocation TypenameLoc;
   bool IsTypeName;
-
-  // TODO: in C++0x, if we have template parameters this must be a
-  // template alias:
-  //   template <...> using id = type;
 
   // Ignore optional 'typename'.
   // FIXME: This is wrong; we should parse this as a typename-specifier.
@@ -377,17 +376,48 @@ Decl *Parser::ParseUsingDeclaration(unsigned Context,
     return 0;
   }
 
-  // Parse (optional) attributes (most likely GNU strong-using extension).
   ParsedAttributes attrs(AttrFactory);
-  MaybeParseGNUAttributes(attrs);
+
+  // Maybe this is an alias-declaration.
+  bool IsAliasDecl = Tok.is(tok::equal);
+  TypeResult TypeAlias;
+  if (IsAliasDecl) {
+    // TODO: Do we want to support attributes somewhere in an alias declaration?
+    // Can't follow GCC since it doesn't support them yet!
+    ConsumeToken();
+
+    if (!getLang().CPlusPlus0x)
+      Diag(Tok.getLocation(), diag::ext_alias_declaration);
+
+    // Name must be an identifier.
+    if (Name.getKind() != UnqualifiedId::IK_Identifier) {
+      Diag(Name.StartLocation, diag::err_alias_declaration_not_identifier);
+      // No removal fixit: can't recover from this.
+      SkipUntil(tok::semi);
+      return 0;
+    } else if (IsTypeName)
+      Diag(TypenameLoc, diag::err_alias_declaration_not_identifier)
+        << FixItHint::CreateRemoval(SourceRange(TypenameLoc,
+                             SS.isNotEmpty() ? SS.getEndLoc() : TypenameLoc));
+    else if (SS.isNotEmpty())
+      Diag(SS.getBeginLoc(), diag::err_alias_declaration_not_identifier)
+        << FixItHint::CreateRemoval(SS.getRange());
+
+    TypeAlias = ParseTypeName(0, Declarator::AliasDeclContext);
+  } else
+    // Parse (optional) attributes (most likely GNU strong-using extension).
+    MaybeParseGNUAttributes(attrs);
 
   // Eat ';'.
   DeclEnd = Tok.getLocation();
   ExpectAndConsume(tok::semi, diag::err_expected_semi_after,
-                   !attrs.empty() ? "attributes list" : "using declaration",
+                   !attrs.empty() ? "attributes list" :
+                   IsAliasDecl ? "alias declaration" : "using declaration",
                    tok::semi);
 
   // Diagnose an attempt to declare a templated using-declaration.
+  // TODO: in C++0x, alias-declarations can be templates:
+  //   template <...> using id = type;
   if (TemplateInfo.Kind) {
     SourceRange R = TemplateInfo.getSourceRange();
     Diag(UsingLoc, diag::err_templated_using_declaration)
@@ -399,18 +429,30 @@ Decl *Parser::ParseUsingDeclaration(unsigned Context,
     return 0;
   }
 
+  if (IsAliasDecl)
+    return Actions.ActOnAliasDeclaration(getCurScope(), AS, UsingLoc, Name,
+                                         TypeAlias);
+
   return Actions.ActOnUsingDeclaration(getCurScope(), AS, true, UsingLoc, SS,
                                        Name, attrs.getList(),
                                        IsTypeName, TypenameLoc);
 }
 
-/// ParseStaticAssertDeclaration - Parse C++0x static_assert-declaratoion.
+/// ParseStaticAssertDeclaration - Parse C++0x or C1X static_assert-declaration.
 ///
-///      static_assert-declaration:
-///        static_assert ( constant-expression  ,  string-literal  ) ;
+/// [C++0x] static_assert-declaration:
+///           static_assert ( constant-expression  ,  string-literal  ) ;
+///
+/// [C1X]   static_assert-declaration:
+///           _Static_assert ( constant-expression  ,  string-literal  ) ;
 ///
 Decl *Parser::ParseStaticAssertDeclaration(SourceLocation &DeclEnd){
-  assert(Tok.is(tok::kw_static_assert) && "Not a static_assert declaration");
+  assert((Tok.is(tok::kw_static_assert) || Tok.is(tok::kw__Static_assert)) &&
+         "Not a static_assert declaration");
+
+  if (Tok.is(tok::kw__Static_assert) && !getLang().C1X)
+    Diag(Tok, diag::ext_c1x_static_assert);
+
   SourceLocation StaticAssertLoc = ConsumeToken();
 
   if (Tok.isNot(tok::l_paren)) {
@@ -1071,7 +1113,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
     case tok::kw_mutable:         // struct foo {...} mutable      x;
       // As shown above, type qualifiers and storage class specifiers absolutely
       // can occur after class specifiers according to the grammar.  However,
-      // almost noone actually writes code like this.  If we see one of these,
+      // almost no one actually writes code like this.  If we see one of these,
       // it is much more likely that someone missed a semi colon and the
       // type/storage class specifier we're seeing is part of the *next*
       // intended declaration, as in:
@@ -1374,6 +1416,17 @@ bool Parser::isCXX0XFinalKeyword() const {
 void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
                                        const ParsedTemplateInfo &TemplateInfo,
                                        ParsingDeclRAIIObject *TemplateDiags) {
+  if (Tok.is(tok::at)) {
+    if (getLang().ObjC1 && NextToken().isObjCAtKeyword(tok::objc_defs))
+      Diag(Tok, diag::err_at_defs_cxx);
+    else
+      Diag(Tok, diag::err_at_in_class);
+    
+    ConsumeToken();
+    SkipUntil(tok::r_brace);
+    return;
+  }
+  
   // Access declarations.
   if (!TemplateInfo.Kind &&
       (Tok.is(tok::identifier) || Tok.is(tok::coloncolon)) &&
@@ -1415,7 +1468,7 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
   }
 
   // static_assert-declaration
-  if (Tok.is(tok::kw_static_assert)) {
+  if (Tok.is(tok::kw_static_assert) || Tok.is(tok::kw__Static_assert)) {
     // FIXME: Check for templates
     SourceLocation DeclEnd;
     ParseStaticAssertDeclaration(DeclEnd);

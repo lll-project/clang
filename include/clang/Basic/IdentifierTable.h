@@ -325,7 +325,7 @@ public:
 
 /// IdentifierTable - This table implements an efficient mapping from strings to
 /// IdentifierInfo nodes.  It has no other purpose, but this is an
-/// extremely performance-critical piece of the code, as each occurrance of
+/// extremely performance-critical piece of the code, as each occurrence of
 /// every identifier goes through here when lexed.
 class IdentifierTable {
   // Shark shows that using MallocAllocator is *much* slower than using this
@@ -623,6 +623,9 @@ public:
   Selector getNullarySelector(IdentifierInfo *ID) {
     return Selector(ID, 0);
   }
+
+  /// Return the total amount of memory allocated for managing selectors.
+  size_t getTotalMemory() const;
 
   /// constructSetterName - Return the setter name for the given
   /// identifier, i.e. "set" + Name where the initial character of Name

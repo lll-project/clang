@@ -62,6 +62,13 @@ def ext_ms_enum_fixed_underlying_type : Extension<
   "enumeration types with a fixed underlying type are a Microsoft extension">, 
   InGroup<Microsoft>;
 
+def ext_c1x_generic_selection : Extension<
+  "generic selections are a C1X-specific feature">;
+def err_duplicate_default_assoc : Error<
+  "duplicate default generic association">;
+def note_previous_default_assoc : Note<
+  "previous default generic association is here">;
+
 def ext_gnu_indirect_goto : Extension<
   "use of GNU indirect-goto extension">, InGroup<GNU>;
 def ext_gnu_address_of_label : Extension<
@@ -114,6 +121,9 @@ def err_function_declared_typedef : Error<
   "function definition declared 'typedef'">;
 def err_iboutletcollection_builtintype : Error<
   "type argument of iboutletcollection attribute cannot be a builtin type">;
+
+def err_at_defs_cxx : Error<"@defs is not supported in Objective-C++">;
+def err_at_in_class : Error<"unexpected '@' in member specification">;
 
 def err_expected_fn_body : Error<
   "expected function body after function declarator">;
@@ -226,6 +236,8 @@ def err_unexected_colon_in_nested_name_spec : Error<
   "unexpected ':' in nested name specifier">;
 def err_bool_redeclaration : Error<
   "redeclaration of C++ built-in type 'bool'">;
+def ext_c1x_static_assert : Extension<
+  "_Static_assert is a C1X-specific feature">;
 
 /// Objective-C parser diagnostics
 def err_expected_minus_or_plus : Error<
@@ -405,10 +417,20 @@ def err_ctor_init_missing_comma : Error<
 // C++ declarations
 def err_friend_decl_defines_class : Error<
   "cannot define a type in a friend declaration">;
+def err_missing_whitespace_digraph : Error<
+  "found '<::' after a "
+  "%select{template name|const_cast|dynamic_cast|reinterpret_cast|static_cast}0"
+  " which forms the digraph '<:' (aka '[') and a ':', did you mean '< ::'?">;
 
 def warn_deleted_function_accepted_as_extension: ExtWarn<
   "deleted function definition accepted as a C++0x extension">, InGroup<CXX0x>;
 
+// C++0x alias-declaration
+def ext_alias_declaration : ExtWarn<
+  "alias declarations accepted as a C++0x extension">, InGroup<CXX0x>;
+def err_alias_declaration_not_identifier : Error<
+  "name defined in alias declaration must be an identifier">;
+    
 // C++0x override control
 def ext_override_control_keyword : Extension<
   "'%0' keyword accepted as a C++0x extension">, InGroup<CXX0x>;

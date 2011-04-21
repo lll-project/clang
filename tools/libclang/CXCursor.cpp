@@ -95,6 +95,7 @@ CXCursor cxcursor::MakeCXCursor(Stmt *S, Decl *Parent,
   case Stmt::ObjCForCollectionStmtClass:
   case Stmt::CXXCatchStmtClass:
   case Stmt::CXXTryStmtClass:  
+  case Stmt::CXXForRangeStmtClass:        
     K = CXCursor_UnexposedStmt;
     break;
       
@@ -129,6 +130,7 @@ CXCursor cxcursor::MakeCXCursor(Stmt *S, Decl *Parent,
   case Stmt::AddrLabelExprClass:        
   case Stmt::StmtExprClass:             
   case Stmt::ChooseExprClass:           
+  case Stmt::GenericSelectionExprClass:
   case Stmt::GNUNullExprClass:          
   case Stmt::CXXStaticCastExprClass:      
   case Stmt::CXXDynamicCastExprClass:     

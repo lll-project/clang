@@ -71,7 +71,7 @@ namespace clang {
   class TemplateTypeParmDecl;
   class TranslationUnitDecl;
   class TypeDecl;
-  class TypedefDecl;
+  class TypedefNameDecl;
   class UsingDecl;
   class UsingShadowDecl;
   class UnresolvedSetIterator;
@@ -342,6 +342,12 @@ public:
   }
   void Deallocate(void *Ptr) const { }
   
+  /// Return the total amount of physical memory allocated for representing
+  /// AST nodes and type information.
+  size_t getTotalAllocatedMemory() const {
+    return BumpAlloc.getTotalMemory();
+  }
+  
   PartialDiagnostic::StorageAllocator &getDiagAllocator() {
     return DiagAllocator;
   }
@@ -422,6 +428,10 @@ public:
   CanQualType VoidPtrTy, NullPtrTy;
   CanQualType OverloadTy, DependentTy, UnknownAnyTy;
   CanQualType ObjCBuiltinIdTy, ObjCBuiltinClassTy, ObjCBuiltinSelTy;
+
+  // Types for deductions in C++0x [stmt.ranged]'s desugaring. Built on demand.
+  mutable QualType AutoDeductTy;     // Deduction against 'auto'.
+  mutable QualType AutoRRefDeductTy; // Deduction against 'auto &&'.
 
   ASTContext(const LangOptions& LOpts, SourceManager &SM, const TargetInfo &t,
              IdentifierTable &idents, SelectorTable &sels,
@@ -660,9 +670,9 @@ public:
   }
 
   /// getTypedefType - Return the unique reference to the type for the
-  /// specified typename decl.
-  QualType getTypedefType(const TypedefDecl *Decl, QualType Canon = QualType())
-    const;
+  /// specified typedef-name decl.
+  QualType getTypedefType(const TypedefNameDecl *Decl,
+                          QualType Canon = QualType()) const;
 
   QualType getRecordType(const RecordDecl *Decl) const;
 
@@ -744,6 +754,12 @@ public:
 
   /// getAutoType - C++0x deduced auto type.
   QualType getAutoType(QualType DeducedType) const;
+
+  /// getAutoDeductType - C++0x deduction pattern for 'auto' type.
+  QualType getAutoDeductType() const;
+
+  /// getAutoRRefDeductType - C++0x deduction pattern for 'auto &&' type.
+  QualType getAutoRRefDeductType() const;
 
   /// getTagDeclType - Return the unique reference to the type for the
   /// specified TagDecl (struct/union/class/enum) decl.

@@ -105,12 +105,13 @@ void ASTTypeWriter::VisitBlockPointerType(const BlockPointerType *T) {
 }
 
 void ASTTypeWriter::VisitLValueReferenceType(const LValueReferenceType *T) {
-  Writer.AddTypeRef(T->getPointeeType(), Record);
+  Writer.AddTypeRef(T->getPointeeTypeAsWritten(), Record);
+  Record.push_back(T->isSpelledAsLValue());
   Code = TYPE_LVALUE_REFERENCE;
 }
 
 void ASTTypeWriter::VisitRValueReferenceType(const RValueReferenceType *T) {
-  Writer.AddTypeRef(T->getPointeeType(), Record);
+  Writer.AddTypeRef(T->getPointeeTypeAsWritten(), Record);
   Code = TYPE_RVALUE_REFERENCE;
 }
 
@@ -658,6 +659,7 @@ static void AddStmtsExprs(llvm::BitstreamWriter &Stream,
   RECORD(EXPR_SHUFFLE_VECTOR);
   RECORD(EXPR_BLOCK);
   RECORD(EXPR_BLOCK_DECL_REF);
+  RECORD(EXPR_GENERIC_SELECTION);
   RECORD(EXPR_OBJC_STRING_LITERAL);
   RECORD(EXPR_OBJC_ENCODE);
   RECORD(EXPR_OBJC_SELECTOR_EXPR);
@@ -1006,6 +1008,7 @@ void ASTWriter::WriteLanguageOptions(const LangOptions &LangOpts) {
   Record.push_back(LangOpts.Digraphs);  // C94, C99 and C++
   Record.push_back(LangOpts.HexFloats);  // C99 Hexadecimal float constants.
   Record.push_back(LangOpts.C99);  // C99 Support
+  Record.push_back(LangOpts.C1X);  // C1X Support
   Record.push_back(LangOpts.Microsoft);  // Microsoft extensions.
   // LangOpts.MSCVersion is ignored because all it does it set a macro, which is
   // already saved elsewhere.
@@ -2823,6 +2826,8 @@ void ASTWriter::WriteASTCore(Sema &SemaRef, MemorizeStatCalls *StatCalls,
   AddTypeRef(Context.ObjCSelRedefinitionType, Record);
   AddTypeRef(Context.getRawNSConstantStringType(), Record);
   Record.push_back(Context.isInt128Installed());
+  AddTypeRef(Context.AutoDeductTy, Record);
+  AddTypeRef(Context.AutoRRefDeductTy, Record);
   Stream.EmitRecord(SPECIAL_TYPES, Record);
 
   // Keep writing types and declarations until all types and
@@ -3489,7 +3494,7 @@ void ASTWriter::AddQualifierInfo(const QualifierInfo &Info,
 void ASTWriter::AddNestedNameSpecifier(NestedNameSpecifier *NNS,
                                        RecordDataImpl &Record) {
   // Nested name specifiers usually aren't too long. I think that 8 would
-  // typically accomodate the vast majority.
+  // typically accommodate the vast majority.
   llvm::SmallVector<NestedNameSpecifier *, 8> NestedNames;
 
   // Push each of the NNS's onto a stack for serialization in reverse order.
@@ -3532,7 +3537,7 @@ void ASTWriter::AddNestedNameSpecifier(NestedNameSpecifier *NNS,
 void ASTWriter::AddNestedNameSpecifierLoc(NestedNameSpecifierLoc NNS,
                                           RecordDataImpl &Record) {
   // Nested name specifiers usually aren't too long. I think that 8 would
-  // typically accomodate the vast majority.
+  // typically accommodate the vast majority.
   llvm::SmallVector<NestedNameSpecifierLoc , 8> NestedNames;
 
   // Push each of the nested-name-specifiers's onto a stack for
@@ -3924,6 +3929,18 @@ void ASTWriter::AddedCXXImplicitMember(const CXXRecordDecl *RD, const Decl *D) {
 
 void ASTWriter::AddedCXXTemplateSpecialization(const ClassTemplateDecl *TD,
                                      const ClassTemplateSpecializationDecl *D) {
+  // The specializations set is kept in the canonical template.
+  TD = TD->getCanonicalDecl();
+  if (!(D->getPCHLevel() == 0 && TD->getPCHLevel() > 0))
+    return; // Not a source specialization added to a template from PCH.
+
+  UpdateRecord &Record = DeclUpdates[TD];
+  Record.push_back(UPD_CXX_ADDED_TEMPLATE_SPECIALIZATION);
+  AddDeclRef(D, Record);
+}
+
+void ASTWriter::AddedCXXTemplateSpecialization(const FunctionTemplateDecl *TD,
+                                               const FunctionDecl *D) {
   // The specializations set is kept in the canonical template.
   TD = TD->getCanonicalDecl();
   if (!(D->getPCHLevel() == 0 && TD->getPCHLevel() > 0))

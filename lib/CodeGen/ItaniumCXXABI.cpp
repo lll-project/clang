@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This provides C++ code generation targetting the Itanium C++ ABI.  The class
+// This provides C++ code generation targeting the Itanium C++ ABI.  The class
 // in this file generates structures that follow the Itanium C++ ABI, which is
 // documented at:
 //  http://www.codesourcery.com/public/cxx-abi/abi.html
@@ -514,10 +514,10 @@ llvm::Constant *ItaniumCXXABI::EmitMemberPointer(const CXXMethodDecl *MD) {
   if (MD->isVirtual()) {
     uint64_t Index = CGM.getVTables().getMethodVTableIndex(MD);
 
-    // FIXME: We shouldn't use / 8 here.
-    uint64_t PointerWidthInBytes =
-      getContext().Target.getPointerWidth(0) / 8;
-    uint64_t VTableOffset = (Index * PointerWidthInBytes);
+    const ASTContext &Context = getContext();
+    CharUnits PointerWidth =
+      Context.toCharUnitsFromBits(Context.Target.getPointerWidth(0));
+    uint64_t VTableOffset = (Index * PointerWidth.getQuantity());
 
     if (IsARM) {
       // ARM C++ ABI 3.2.1:
@@ -537,20 +537,22 @@ llvm::Constant *ItaniumCXXABI::EmitMemberPointer(const CXXMethodDecl *MD) {
       MemPtr[1] = llvm::ConstantInt::get(ptrdiff_t, 0);
     }
   } else {
-    const FunctionProtoType *FPT = MD->getType()->getAs<FunctionProtoType>();
+    QualType fnType = MD->getType();
+    const FunctionProtoType *FPT = MD->getType()->castAs<FunctionProtoType>();
     const llvm::Type *Ty;
     // Check whether the function has a computable LLVM signature.
     if (!CodeGenTypes::VerifyFuncTypeComplete(FPT)) {
       // The function has a computable LLVM signature; use the correct type.
-      Ty = Types.GetFunctionType(Types.getFunctionInfo(MD), FPT->isVariadic());
+      Ty = Types.GetFunctionType(Types.getFunctionInfo(MD),
+                                 FPT->isVariadic());
     } else {
       // Use an arbitrary non-function type to tell GetAddrOfFunction that the
       // function type is incomplete.
       Ty = ptrdiff_t;
     }
+    llvm::Constant *addr = CGM.GetAddrOfFunction(MD, Ty);
 
-    llvm::Constant *Addr = CGM.GetAddrOfFunction(MD, Ty);
-    MemPtr[0] = llvm::ConstantExpr::getPtrToInt(Addr, ptrdiff_t);
+    MemPtr[0] = llvm::ConstantExpr::getPtrToInt(addr, ptrdiff_t);
     MemPtr[1] = llvm::ConstantInt::get(ptrdiff_t, 0);
   }
   
@@ -650,20 +652,21 @@ ItaniumCXXABI::EmitMemberPointerIsNotNull(CodeGenFunction &CGF,
     return Builder.CreateICmpNE(MemPtr, NegativeOne, "memptr.tobool");
   }
   
-  // In Itanium, a member function pointer is null if 'ptr' is null.
+  // In Itanium, a member function pointer is not null if 'ptr' is not null.
   llvm::Value *Ptr = Builder.CreateExtractValue(MemPtr, 0, "memptr.ptr");
 
   llvm::Constant *Zero = llvm::ConstantInt::get(Ptr->getType(), 0);
   llvm::Value *Result = Builder.CreateICmpNE(Ptr, Zero, "memptr.tobool");
 
-  // In ARM, it's that, plus the low bit of 'adj' must be zero.
+  // On ARM, a member function pointer is also non-null if the low bit of 'adj'
+  // (the virtual bit) is set.
   if (IsARM) {
     llvm::Constant *One = llvm::ConstantInt::get(Ptr->getType(), 1);
     llvm::Value *Adj = Builder.CreateExtractValue(MemPtr, 1, "memptr.adj");
     llvm::Value *VirtualBit = Builder.CreateAnd(Adj, One, "memptr.virtualbit");
-    llvm::Value *IsNotVirtual = Builder.CreateICmpEQ(VirtualBit, Zero,
-                                                     "memptr.notvirtual");
-    Result = Builder.CreateAnd(Result, IsNotVirtual);
+    llvm::Value *IsVirtual = Builder.CreateICmpNE(VirtualBit, Zero,
+                                                  "memptr.isvirtual");
+    Result = Builder.CreateOr(Result, IsVirtual);
   }
 
   return Result;

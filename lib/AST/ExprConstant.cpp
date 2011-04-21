@@ -274,6 +274,9 @@ public:
   }
 
   bool VisitParenExpr(ParenExpr *E) { return Visit(E->getSubExpr()); }
+  bool VisitGenericSelectionExpr(GenericSelectionExpr *E) {
+    return Visit(E->getResultExpr());
+  }
   bool VisitDeclRefExpr(DeclRefExpr *E) {
     if (Info.Ctx.getCanonicalType(E->getType()).isVolatileQualified())
       return true;
@@ -316,6 +319,8 @@ public:
   bool VisitInitListExpr(InitListExpr *E) {
     for (unsigned i = 0, e = E->getNumInits(); i != e; ++i)
       if (Visit(E->getInit(i))) return true;
+    if (Expr *filler = E->getArrayFiller())
+      return Visit(filler);
     return false;
   }
     
@@ -372,6 +377,9 @@ public:
   }
   
   bool VisitParenExpr(ParenExpr *E) { return Visit(E->getSubExpr()); }
+  bool VisitGenericSelectionExpr(GenericSelectionExpr *E) {
+    return Visit(E->getResultExpr());
+  }
   bool VisitDeclRefExpr(DeclRefExpr *E);
   bool VisitPredefinedExpr(PredefinedExpr *E) { return Success(E); }
   bool VisitCompoundLiteralExpr(CompoundLiteralExpr *E);
@@ -501,6 +509,9 @@ public:
   }
 
   bool VisitParenExpr(ParenExpr *E) { return Visit(E->getSubExpr()); }
+  bool VisitGenericSelectionExpr(GenericSelectionExpr *E) {
+    return Visit(E->getResultExpr());
+  }
 
   bool VisitBinaryOperator(const BinaryOperator *E);
   bool VisitCastExpr(CastExpr* E);
@@ -717,6 +728,8 @@ namespace {
 
     APValue VisitParenExpr(ParenExpr *E)
         { return Visit(E->getSubExpr()); }
+    APValue VisitGenericSelectionExpr(GenericSelectionExpr *E)
+        { return Visit(E->getResultExpr()); }
     APValue VisitUnaryExtension(const UnaryOperator *E)
       { return Visit(E->getSubExpr()); }
     APValue VisitUnaryPlus(const UnaryOperator *E)
@@ -830,6 +843,12 @@ VectorExprEvaluator::VisitInitListExpr(const InitListExpr *E) {
   // becomes every element of the vector, not just the first.
   // This is the behavior described in the IBM AltiVec documentation.
   if (NumInits == 1) {
+    
+    // Handle the case where the vector is initialized by a another 
+    // vector (OpenCL 6.1.6).
+    if (E->getInit(0)->getType()->isVectorType())
+      return this->Visit(const_cast<Expr*>(E->getInit(0)));
+    
     APValue InitValue;
     if (EltTy->isIntegerType()) {
       llvm::APSInt sInt(32);
@@ -975,6 +994,9 @@ public:
   }
 
   bool VisitParenExpr(ParenExpr *E) { return Visit(E->getSubExpr()); }
+  bool VisitGenericSelectionExpr(GenericSelectionExpr *E) {
+    return Visit(E->getResultExpr());
+  }
 
   bool VisitIntegerLiteral(const IntegerLiteral *E) {
     return Success(E->getValue(), E);
@@ -1798,7 +1820,6 @@ bool IntExprEvaluator::VisitCastExpr(CastExpr *E) {
   case CK_GetObjCProperty:
   case CK_LValueBitCast:
   case CK_UserDefinedConversion:
-  case CK_ResolveUnknownAnyType:
     return false;
 
   case CK_LValueToRValue:
@@ -1919,6 +1940,9 @@ public:
   }
 
   bool VisitParenExpr(ParenExpr *E) { return Visit(E->getSubExpr()); }
+  bool VisitGenericSelectionExpr(GenericSelectionExpr *E) {
+    return Visit(E->getResultExpr());
+  }
   bool VisitCallExpr(const CallExpr *E);
 
   bool VisitUnaryOperator(const UnaryOperator *E);
@@ -2252,6 +2276,9 @@ public:
   }
 
   bool VisitParenExpr(ParenExpr *E) { return Visit(E->getSubExpr()); }
+  bool VisitGenericSelectionExpr(GenericSelectionExpr *E) {
+    return Visit(E->getResultExpr());
+  }
 
   bool VisitImaginaryLiteral(ImaginaryLiteral *E);
 
@@ -2352,7 +2379,6 @@ bool ComplexExprEvaluator::VisitCastExpr(CastExpr *E) {
   case CK_GetObjCProperty:
   case CK_LValueBitCast:
   case CK_UserDefinedConversion:
-  case CK_ResolveUnknownAnyType:
     return false;
 
   case CK_FloatingRealToComplex: {
@@ -2841,6 +2867,8 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
 
   case Expr::ParenExprClass:
     return CheckICE(cast<ParenExpr>(E)->getSubExpr(), Ctx);
+  case Expr::GenericSelectionExprClass:
+    return CheckICE(cast<GenericSelectionExpr>(E)->getResultExpr(), Ctx);
   case Expr::IntegerLiteralClass:
   case Expr::CharacterLiteralClass:
   case Expr::CXXBoolLiteralExprClass:

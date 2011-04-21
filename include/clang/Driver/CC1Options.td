@@ -230,8 +230,10 @@ def fdiagnostics_print_source_range_info : Flag<"-fdiagnostics-print-source-rang
   HelpText<"Print source range spans in numeric form">;
 def fdiagnostics_parseable_fixits : Flag<"-fdiagnostics-parseable-fixits">,
   HelpText<"Print fix-its in machine parseable form">;
+def fdiagnostics_show_name : Flag<"-fdiagnostics-show-name">,
+  HelpText<"Print diagnostic name">;
 def fdiagnostics_show_option : Flag<"-fdiagnostics-show-option">,
-  HelpText<"Print diagnostic name with mappable diagnostics">;
+  HelpText<"Print option name with mappable diagnostics">;
 def fdiagnostics_show_category : Separate<"-fdiagnostics-show-category">,
   HelpText<"Print diagnostic category">;
 def fdiagnostics_show_note_include_stack :
@@ -525,6 +527,8 @@ def traditional_cpp : Flag<"-traditional-cpp">,
   HelpText<"Enable some traditional CPP emulation">;
 def ffake_address_space_map : Flag<"-ffake-address-space-map">,
   HelpText<"Use a fake address space map; OpenCL testing purposes only">;
+def funknown_anytype : Flag<"-funknown-anytype">,
+  HelpText<"Enable parser support for the __unknown_anytype type; for testing purposes only">;
 
 //===----------------------------------------------------------------------===//
 // Header Search Options

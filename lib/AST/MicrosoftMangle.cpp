@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This provides C++ name mangling targetting the Microsoft Visual C++ ABI.
+// This provides C++ name mangling targeting the Microsoft Visual C++ ABI.
 //
 //===----------------------------------------------------------------------===//
 
@@ -314,7 +314,7 @@ MicrosoftCXXNameMangler::mangleUnqualifiedName(const NamedDecl *ND,
       
       // We must have an anonymous struct.
       const TagDecl *TD = cast<TagDecl>(ND);
-      if (const TypedefDecl *D = TD->getTypedefForAnonDecl()) {
+      if (const TypedefNameDecl *D = TD->getTypedefNameForAnonDecl()) {
         assert(TD->getDeclContext() == D->getDeclContext() &&
                "Typedef should not be in another decl context!");
         assert(D->getDeclName().getAsIdentifierInfo() &&
@@ -874,6 +874,8 @@ void MicrosoftCXXNameMangler::mangleCallingConvention(const FunctionType *T,
   if (CC == CC_Default)
     CC = IsInstMethod ? getASTContext().getDefaultMethodCallConv() : CC_C;
   switch (CC) {
+    default:
+      assert(0 && "Unsupported CC for mangling");
     case CC_Default:
     case CC_C: Out << 'A'; break;
     case CC_X86Pascal: Out << 'C'; break;

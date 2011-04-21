@@ -41,6 +41,7 @@ def ObjCForCollectionStmt : Stmt;
 // C++ statments
 def CXXCatchStmt : Stmt;
 def CXXTryStmt : Stmt;
+def CXXForRangeStmt : Stmt;
 
 // Expressions
 def Expr : Stmt<1>;
@@ -74,6 +75,7 @@ def DesignatedInitExpr : DStmt<Expr>;
 def ImplicitValueInitExpr : DStmt<Expr>;
 def ParenListExpr : DStmt<Expr>;
 def VAArgExpr : DStmt<Expr>;
+def GenericSelectionExpr : DStmt<Expr>;
 
 // GNU Extensions.
 def AddrLabelExpr : DStmt<Expr>;

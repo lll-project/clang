@@ -221,6 +221,7 @@ public:
       CL_XValue,
       CL_Function, // Functions cannot be lvalues in C.
       CL_Void, // Void cannot be an lvalue in C.
+      CL_AddressableVoid, // Void expression whose address can be taken in C.
       CL_DuplicateVectorComponents, // A vector shuffle with dupes.
       CL_MemberFunction, // An expression referring to a member function
       CL_SubObjCPropertySetting,
@@ -1135,9 +1136,12 @@ public:
 /// In this case, getByteLength() will return 6, but the string literal will
 /// have type "char[2]".
 class StringLiteral : public Expr {
+  friend class ASTStmtReader;
+
   const char *StrData;
   unsigned ByteLength;
   bool IsWide;
+  bool IsPascal;
   unsigned NumConcatenated;
   SourceLocation TokLocs[1];
 
@@ -1148,14 +1152,15 @@ public:
   /// This is the "fully general" constructor that allows representation of
   /// strings formed from multiple concatenated tokens.
   static StringLiteral *Create(ASTContext &C, const char *StrData,
-                               unsigned ByteLength, bool Wide, QualType Ty,
+                               unsigned ByteLength, bool Wide, bool Pascal,
+                               QualType Ty,
                                const SourceLocation *Loc, unsigned NumStrs);
 
   /// Simple constructor for string literals made from one token.
   static StringLiteral *Create(ASTContext &C, const char *StrData,
-                               unsigned ByteLength,
-                               bool Wide, QualType Ty, SourceLocation Loc) {
-    return Create(C, StrData, ByteLength, Wide, Ty, &Loc, 1);
+                               unsigned ByteLength, bool Wide, 
+                               bool Pascal, QualType Ty, SourceLocation Loc) {
+    return Create(C, StrData, ByteLength, Wide, Pascal, Ty, &Loc, 1);
   }
 
   /// \brief Construct an empty string literal.
@@ -1171,8 +1176,8 @@ public:
   void setString(ASTContext &C, llvm::StringRef Str);
 
   bool isWide() const { return IsWide; }
-  void setWide(bool W) { IsWide = W; }
-
+  bool isPascal() const { return IsPascal; }
+  
   bool containsNonAsciiOrNull() const {
     llvm::StringRef Str = getString();
     for (unsigned i = 0, e = Str.size(); i != e; ++i)
@@ -2221,7 +2226,6 @@ private:
     case CK_MemberPointerToBoolean:
     case CK_FloatingComplexToBoolean:
     case CK_IntegralComplexToBoolean:
-    case CK_ResolveUnknownAnyType:
     case CK_LValueBitCast:            // -> bool&
     case CK_UserDefinedConversion:    // operator bool()
       assert(path_empty() && "Cast kind should not have a base path!");
@@ -3174,9 +3178,14 @@ class InitListExpr : public Expr {
   /// written in the source code.
   InitListExpr *SyntacticForm;
 
-  /// If this initializer list initializes a union, specifies which
-  /// field within the union will be initialized.
-  FieldDecl *UnionFieldInit;
+  /// \brief Either:
+  ///  If this initializer list initializes an array with more elements than
+  ///  there are initializers in the list, specifies an expression to be used
+  ///  for value initialization of the rest of the elements.
+  /// Or
+  ///  If this initializer list initializes a union, specifies which
+  ///  field within the union will be initialized.
+  llvm::PointerUnion<Expr *, FieldDecl *> ArrayFillerOrUnionFieldInit;
 
   /// Whether this initializer list originally had a GNU array-range
   /// designator in it. This is a temporary marker used by CodeGen.
@@ -3228,8 +3237,18 @@ public:
   ///
   /// When @p Init is out of range for this initializer list, the
   /// initializer list will be extended with NULL expressions to
-  /// accomodate the new entry.
+  /// accommodate the new entry.
   Expr *updateInit(ASTContext &C, unsigned Init, Expr *expr);
+
+  /// \brief If this initializer list initializes an array with more elements
+  /// than there are initializers in the list, specifies an expression to be
+  /// used for value initialization of the rest of the elements.
+  Expr *getArrayFiller() {
+    return ArrayFillerOrUnionFieldInit.dyn_cast<Expr *>();
+  }
+  void setArrayFiller(Expr *filler) {
+    ArrayFillerOrUnionFieldInit = filler;
+  }
 
   /// \brief If this initializes a union, specifies which field in the
   /// union to initialize.
@@ -3237,8 +3256,12 @@ public:
   /// Typically, this field is the first named field within the
   /// union. However, a designated initializer can specify the
   /// initialization of a different field within the union.
-  FieldDecl *getInitializedFieldInUnion() { return UnionFieldInit; }
-  void setInitializedFieldInUnion(FieldDecl *FD) { UnionFieldInit = FD; }
+  FieldDecl *getInitializedFieldInUnion() {
+    return ArrayFillerOrUnionFieldInit.dyn_cast<FieldDecl *>();
+  }
+  void setInitializedFieldInUnion(FieldDecl *FD) {
+    ArrayFillerOrUnionFieldInit = FD;
+  }
 
   // Explicit InitListExpr's originate from source code (and have valid source
   // locations). Implicit InitListExpr's are created by the semantic analyzer.
@@ -3289,6 +3312,9 @@ public:
   const_reverse_iterator rbegin() const { return InitExprs.rbegin(); }
   reverse_iterator rend() { return InitExprs.rend(); }
   const_reverse_iterator rend() const { return InitExprs.rend(); }
+
+  friend class ASTStmtReader;
+  friend class ASTStmtWriter;
 };
 
 /// @brief Represents a C99 designated initializer expression.
@@ -3675,6 +3701,118 @@ public:
   friend class ASTStmtWriter;
 };
 
+
+/// \brief Represents a C1X generic selection.
+///
+/// A generic selection (C1X 6.5.1.1) contains an unevaluated controlling
+/// expression, followed by one or more generic associations.  Each generic
+/// association specifies a type name and an expression, or "default" and an
+/// expression (in which case it is known as a default generic association).
+/// The type and value of the generic selection are identical to those of its
+/// result expression, which is defined as the expression in the generic
+/// association with a type name that is compatible with the type of the
+/// controlling expression, or the expression in the default generic association
+/// if no types are compatible.  For example:
+///
+/// @code
+/// _Generic(X, double: 1, float: 2, default: 3)
+/// @endcode
+///
+/// The above expression evaluates to 1 if 1.0 is substituted for X, 2 if 1.0f
+/// or 3 if "hello".
+///
+/// As an extension, generic selections are allowed in C++, where the following
+/// additional semantics apply:
+///
+/// Any generic selection whose controlling expression is type-dependent or
+/// which names a dependent type in its association list is result-dependent,
+/// which means that the choice of result expression is dependent.
+/// Result-dependent generic associations are both type- and value-dependent.
+class GenericSelectionExpr : public Expr {
+  enum { CONTROLLING, END_EXPR };
+  TypeSourceInfo **AssocTypes;
+  Stmt **SubExprs;
+  unsigned NumAssocs, ResultIndex;
+  SourceLocation GenericLoc, DefaultLoc, RParenLoc;
+
+public:
+  GenericSelectionExpr(ASTContext &Context,
+                       SourceLocation GenericLoc, Expr *ControllingExpr,
+                       TypeSourceInfo **AssocTypes, Expr **AssocExprs,
+                       unsigned NumAssocs, SourceLocation DefaultLoc,
+                       SourceLocation RParenLoc,
+                       bool ContainsUnexpandedParameterPack,
+                       unsigned ResultIndex);
+
+  /// This constructor is used in the result-dependent case.
+  GenericSelectionExpr(ASTContext &Context,
+                       SourceLocation GenericLoc, Expr *ControllingExpr,
+                       TypeSourceInfo **AssocTypes, Expr **AssocExprs,
+                       unsigned NumAssocs, SourceLocation DefaultLoc,
+                       SourceLocation RParenLoc,
+                       bool ContainsUnexpandedParameterPack);
+
+  explicit GenericSelectionExpr(EmptyShell Empty)
+    : Expr(GenericSelectionExprClass, Empty) { }
+
+  unsigned getNumAssocs() const { return NumAssocs; }
+
+  SourceLocation getGenericLoc() const { return GenericLoc; }
+  SourceLocation getDefaultLoc() const { return DefaultLoc; }
+  SourceLocation getRParenLoc() const { return RParenLoc; }
+
+  const Expr *getAssocExpr(unsigned i) const {
+    return cast<Expr>(SubExprs[END_EXPR+i]);
+  }
+  Expr *getAssocExpr(unsigned i) { return cast<Expr>(SubExprs[END_EXPR+i]); }
+
+  const TypeSourceInfo *getAssocTypeSourceInfo(unsigned i) const {
+    return AssocTypes[i];
+  }
+  TypeSourceInfo *getAssocTypeSourceInfo(unsigned i) { return AssocTypes[i]; }
+
+  QualType getAssocType(unsigned i) const {
+    if (const TypeSourceInfo *TS = getAssocTypeSourceInfo(i))
+      return TS->getType();
+    else
+      return QualType();
+  }
+
+  const Expr *getControllingExpr() const {
+    return cast<Expr>(SubExprs[CONTROLLING]);
+  }
+  Expr *getControllingExpr() { return cast<Expr>(SubExprs[CONTROLLING]); }
+
+  /// Whether this generic selection is result-dependent.
+  bool isResultDependent() const { return ResultIndex == -1U; }
+
+  /// The zero-based index of the result expression's generic association in
+  /// the generic selection's association list.  Defined only if the
+  /// generic selection is not result-dependent.
+  unsigned getResultIndex() const {
+    assert(!isResultDependent() && "Generic selection is result-dependent");
+    return ResultIndex;
+  }
+
+  /// The generic selection's result expression.  Defined only if the
+  /// generic selection is not result-dependent.
+  const Expr *getResultExpr() const { return getAssocExpr(getResultIndex()); }
+  Expr *getResultExpr() { return getAssocExpr(getResultIndex()); }
+
+  SourceRange getSourceRange() const {
+    return SourceRange(GenericLoc, RParenLoc);
+  }
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == GenericSelectionExprClass;
+  }
+  static bool classof(const GenericSelectionExpr *) { return true; }
+
+  child_range children() {
+    return child_range(SubExprs, SubExprs+END_EXPR+NumAssocs);
+  }
+
+  friend class ASTStmtReader;
+};
 
 //===----------------------------------------------------------------------===//
 // Clang Extensions

@@ -39,6 +39,7 @@ td {
   <li><a href="#cxx_lambdas">C++0x lambdas</a></li>
   <li><a href="#cxx_nullptr">C++0x nullptr</a></li>
   <li><a href="#cxx_override_control">C++0x override control</a></li>
+  <li><a href="#cxx_range_for">C++0x range-based for loop</a></li>
   <li><a href="#cxx_rvalue_references">C++0x rvalue references</a></li>
   <li><a href="#cxx_reference_qualified_functions">C++0x reference-qualified functions</a></li>
   <li><a href="#cxx_static_assert">C++0x <tt>static_assert()</tt></a></li>
@@ -52,10 +53,12 @@ td {
 <li><a href="#checking_type_traits">Checks for Type Traits</a></li>
 <li><a href="#blocks">Blocks</a></li>
 <li><a href="#overloading-in-c">Function Overloading in C</a></li>
+<li><a href="#generic-selections">Generic Selections</a></li>
 <li><a href="#builtins">Builtin Functions</a>
   <ul>
   <li><a href="#__builtin_shufflevector">__builtin_shufflevector</a></li>
   <li><a href="#__builtin_unreachable">__builtin_unreachable</a></li>
+  <li><a href="#__sync_swap">__sync_swap</a></li>
  </ul>
 </li>
 <li><a href="#targetspecific">Target-Specific Extensions</a>
@@ -408,6 +411,11 @@ the override control keywords is enabled.</p>
 <h3 id="cxx_reference_qualified_functions">C++0x reference-qualified functions</h3>
 <p>Use <tt>__has_feature(cxx_reference_qualified_functions)</tt> to determine if support for reference-qualified functions (e.g., member functions with <code>&amp;</code> or <code>&amp;&amp;</code> applied to <code>*this</code>) is enabled.</p>
 
+<h3 id="cxx_range_for">C++0x range-based for loop</tt></h3>
+
+<p>Use <tt>__has_feature(cxx_range_for)</tt> to determine if support for
+the range-based for loop is enabled. </p>
+
 <h3 id="cxx_rvalue_references">C++0x rvalue references</tt></h3>
 
 <p>Use <tt>__has_feature(cxx_rvalue_references)</tt> to determine if support for
@@ -603,6 +611,20 @@ caveats to this use of name mangling:</p>
 
 
 <!-- ======================================================================= -->
+<h2 id="generic-selections">Generic Selections</h2>
+<!-- ======================================================================= -->
+
+<p>The C1X generic selection expression is available in all languages
+supported by Clang.  The syntax is the same as that given in the C1X draft
+standard.</p>
+
+<p>In C, type compatibility is decided according to the rules given in the
+appropriate standard, but in C++, which lacks the type compatibility rules
+used in C, types are considered compatible only if they are equivalent.</p>
+
+<p>Query for this feature with __has_feature(generic_selections).</p>
+
+<!-- ======================================================================= -->
 <h2 id="builtins">Builtin Functions</h2>
 <!-- ======================================================================= -->
 
@@ -710,6 +732,36 @@ no arguments and produces a void result.
 </p>
 
 <p>Query for this feature with __has_builtin(__builtin_unreachable).</p>
+
+<!-- ======================================================================= -->
+<h3 id="__sync_swap">__sync_swap</h3>
+<!-- ======================================================================= -->
+
+<p><tt>__sync_swap</tt> is used to atomically swap integers or pointers in
+memory.
+</p>
+
+<p><b>Syntax:</b></p>
+
+<pre>
+<i>type</i> __sync_swap(<i>type</i> *ptr, <i>type</i> value, ...)
+</pre>
+
+<p><b>Example of Use:</b></p>
+
+<pre>
+int old_value = __sync_swap(&value, new_value);
+</pre>
+
+<p><b>Description:</b></p>
+
+<p>The __sync_swap() builtin extends the existing __sync_*() family of atomic
+intrinsics to allow code to atomically swap the current value with the new
+value.  More importantly, it helps developers write more efficient and correct
+code by avoiding expensive loops around __sync_bool_compare_and_swap() or
+relying on the platform specific implementation details of
+__sync_lock_test_and_set(). The __sync_swap() builtin is a full barrier.
+</p>
 
 
 <!-- ======================================================================= -->

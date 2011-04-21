@@ -119,7 +119,8 @@ static void diagnoseBadTypeAttribute(Sema &S, const AttributeList &attr,
     case AttributeList::AT_stdcall: \
     case AttributeList::AT_thiscall: \
     case AttributeList::AT_pascal: \
-    case AttributeList::AT_regparm
+    case AttributeList::AT_regparm: \
+    case AttributeList::AT_pcs \
 
 namespace {
   /// An object which stores processing state for the entire
@@ -841,6 +842,10 @@ static QualType ConvertDeclSpecToType(Sema &S, TypeProcessingState &state) {
     break;
   }
 
+  case DeclSpec::TST_unknown_anytype:
+    Result = Context.UnknownAnyTy;
+    break;
+
   case DeclSpec::TST_error:
     Result = Context.IntTy;
     declarator.setInvalidType(true);
@@ -1154,8 +1159,13 @@ QualType Sema::BuildArrayType(QualType T, ArrayType::ArraySizeModifier ASM,
   }
 
   // Do lvalue-to-rvalue conversions on the array size expression.
-  if (ArraySize && !ArraySize->isRValue())
-    DefaultLvalueConversion(ArraySize);
+  if (ArraySize && !ArraySize->isRValue()) {
+    ExprResult Result = DefaultLvalueConversion(ArraySize);
+    if (Result.isInvalid())
+      return QualType();
+
+    ArraySize = Result.take();
+  }
 
   // C99 6.7.5.2p1: The size expression shall have integer type.
   // TODO: in theory, if we were insane, we could allow contextual
@@ -1590,9 +1600,12 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
     case Declarator::TemplateTypeArgContext:
       Error = 7; // Template type argument
       break;
+    case Declarator::AliasDeclContext:
+      Error = 9; // Type alias
+      break;
     case Declarator::TypeNameContext:
       if (!AutoAllowedInTypeName)
-        Error = 10; // Generic
+        Error = 11; // Generic
       break;
     case Declarator::FileContext:
     case Declarator::BlockContext:
@@ -1606,7 +1619,7 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
 
     // In Objective-C it is an error to use 'auto' on a function declarator.
     if (D.isFunctionDeclarator())
-      Error = 9;
+      Error = 10;
 
     // C++0x [dcl.spec.auto]p2: 'auto' is always fine if the declarator
     // contains a trailing return type. That is only legal at the outermost
@@ -1642,6 +1655,11 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
   DeclarationName Name;
   if (D.getIdentifier())
     Name = D.getIdentifier();
+
+  // Does this declaration declare a typedef-name?
+  bool IsTypedefName =
+    D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_typedef ||
+    D.getContext() == Declarator::AliasDeclContext;
 
   // Walk the DeclTypeInfo, building the recursive type as we go.
   // DeclTypeInfos are ordered from the identifier out, which is
@@ -1819,9 +1837,9 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
 
       // Exception specs are not allowed in typedefs. Complain, but add it
       // anyway.
-      if (FTI.getExceptionSpecType() != EST_None &&
-          D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_typedef)
-        Diag(FTI.getExceptionSpecLoc(), diag::err_exception_spec_in_typedef);
+      if (IsTypedefName && FTI.getExceptionSpecType())
+        Diag(FTI.getExceptionSpecLoc(), diag::err_exception_spec_in_typedef)
+          << (D.getContext() == Declarator::AliasDeclContext);
 
       if (!FTI.NumArgs && !FTI.isVariadic && !getLangOptions().CPlusPlus) {
         // Simple void foo(), where the incoming T is the result type.
@@ -2047,8 +2065,7 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
     //   declaration.
     if ((FnTy->getTypeQuals() != 0 || FnTy->getRefQualifier()) &&
         !(D.getContext() == Declarator::TemplateTypeArgContext &&
-          !D.isFunctionDeclarator()) &&
-        D.getDeclSpec().getStorageClassSpec() != DeclSpec::SCS_typedef &&
+          !D.isFunctionDeclarator()) && !IsTypedefName &&
         (FreeFunction ||
          D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static)) {
       if (D.getContext() == Declarator::TemplateTypeArgContext) {
@@ -2186,6 +2203,7 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
     case Declarator::KNRTypeListContext:
     case Declarator::ObjCPrototypeContext: // FIXME: special diagnostic here?
     case Declarator::TypeNameContext:
+    case Declarator::AliasDeclContext:
     case Declarator::MemberContext:
     case Declarator::BlockContext:
     case Declarator::ForContext:
@@ -2235,6 +2253,8 @@ static AttributeList::Kind getAttrListKind(AttributedType::Kind kind) {
     return AttributeList::AT_thiscall;
   case AttributedType::attr_pascal:
     return AttributeList::AT_pascal;
+  case AttributedType::attr_pcs:
+    return AttributeList::AT_pcs;
   }
   llvm_unreachable("unexpected attribute kind!");
   return AttributeList::Kind();
@@ -2623,7 +2643,8 @@ TypeResult Sema::ActOnTypeName(Scope *S, Declarator &D) {
     //   A type-specifier-seq shall not define a class or enumeration
     //   unless it appears in the type-id of an alias-declaration
     //   (7.1.3).
-    if (OwnedTag && OwnedTag->isDefinition())
+    if (OwnedTag && OwnedTag->isDefinition() &&
+        D.getContext() != Declarator::AliasDeclContext)
       Diag(OwnedTag->getLocation(), diag::err_type_defined_in_type_specifier)
         << Context.getTypeDeclType(OwnedTag);
   }
@@ -3323,7 +3344,7 @@ QualType Sema::getElaboratedType(ElaboratedTypeKeyword Keyword,
 }
 
 QualType Sema::BuildTypeofExprType(Expr *E, SourceLocation Loc) {
-  ExprResult ER = CheckPlaceholderExpr(E, Loc);
+  ExprResult ER = CheckPlaceholderExpr(E);
   if (ER.isInvalid()) return QualType();
   E = ER.take();
 
@@ -3336,7 +3357,7 @@ QualType Sema::BuildTypeofExprType(Expr *E, SourceLocation Loc) {
 }
 
 QualType Sema::BuildDecltypeType(Expr *E, SourceLocation Loc) {
-  ExprResult ER = CheckPlaceholderExpr(E, Loc);
+  ExprResult ER = CheckPlaceholderExpr(E);
   if (ER.isInvalid()) return QualType();
   E = ER.take();
   

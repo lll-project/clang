@@ -696,6 +696,10 @@ private:
   /// slot of its function, enabling the named return value optimization (NRVO).
   bool NRVOVariable : 1;
 
+  /// \brief Whether this variable is the for-range-declaration in a C++0x
+  /// for-range statement.
+  bool CXXForRangeDecl : 1;
+
   friend class StmtIteratorBase;
   friend class ASTDeclReader;
   
@@ -706,7 +710,7 @@ protected:
           StorageClass SCAsWritten)
     : DeclaratorDecl(DK, DC, IdLoc, Id, T, TInfo, StartLoc), Init(),
       ThreadSpecified(false), HasCXXDirectInit(false),
-      ExceptionVar(false), NRVOVariable(false) {
+      ExceptionVar(false), NRVOVariable(false), CXXForRangeDecl(false) {
     SClass = SC;
     SClassAsWritten = SCAsWritten;
   }
@@ -1051,6 +1055,11 @@ public:
   /// NRVO candidate.
   bool isNRVOVariable() const { return NRVOVariable; }
   void setNRVOVariable(bool NRVO) { NRVOVariable = NRVO; }
+
+  /// \brief Determine whether this variable is the for-range-declaration in
+  /// a C++0x for-range statement.
+  bool isCXXForRangeDecl() const { return CXXForRangeDecl; }
+  void setCXXForRangeDecl(bool FRD) { CXXForRangeDecl = FRD; }
   
   /// \brief If this variable is an instantiated static data member of a
   /// class template specialization, returns the templated static data member
@@ -1986,17 +1995,21 @@ public:
 };
 
 
-class TypedefDecl : public TypeDecl, public Redeclarable<TypedefDecl> {
+/// Base class for declarations which introduce a typedef-name.
+class TypedefNameDecl : public TypeDecl, public Redeclarable<TypedefNameDecl> {
   /// UnderlyingType - This is the type the typedef is set to.
   TypeSourceInfo *TInfo;
 
-  TypedefDecl(DeclContext *DC, SourceLocation StartLoc, SourceLocation IdLoc,
-              IdentifierInfo *Id, TypeSourceInfo *TInfo)
-    : TypeDecl(Typedef, DC, IdLoc, Id, StartLoc), TInfo(TInfo) {}
-
 protected:
-  typedef Redeclarable<TypedefDecl> redeclarable_base;
-  virtual TypedefDecl *getNextRedeclaration() { return RedeclLink.getNext(); }
+  TypedefNameDecl(Kind DK, DeclContext *DC, SourceLocation StartLoc,
+                  SourceLocation IdLoc, IdentifierInfo *Id,
+                  TypeSourceInfo *TInfo)
+    : TypeDecl(DK, DC, IdLoc, Id, StartLoc), TInfo(TInfo) {}
+
+  typedef Redeclarable<TypedefNameDecl> redeclarable_base;
+  virtual TypedefNameDecl *getNextRedeclaration() {
+    return RedeclLink.getNext();
+  }
 
 public:
   typedef redeclarable_base::redecl_iterator redecl_iterator;
@@ -2007,19 +2020,15 @@ public:
     return redeclarable_base::redecls_end();
   }
 
-  static TypedefDecl *Create(ASTContext &C, DeclContext *DC,
-                             SourceLocation StartLoc, SourceLocation IdLoc,
-                             IdentifierInfo *Id, TypeSourceInfo *TInfo);
-
   TypeSourceInfo *getTypeSourceInfo() const {
     return TInfo;
   }
 
-  /// Retrieves the canonical declaration of this typedef.
-  TypedefDecl *getCanonicalDecl() {
+  /// Retrieves the canonical declaration of this typedef-name.
+  TypedefNameDecl *getCanonicalDecl() {
     return getFirstDeclaration();
   }
-  const TypedefDecl *getCanonicalDecl() const {
+  const TypedefNameDecl *getCanonicalDecl() const {
     return getFirstDeclaration();
   }
 
@@ -2030,12 +2039,52 @@ public:
     TInfo = newType;
   }
 
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classof(const TypedefNameDecl *D) { return true; }
+  static bool classofKind(Kind K) {
+    return K >= firstTypedefName && K <= lastTypedefName;
+  }
+};
+
+/// TypedefDecl - Represents the declaration of a typedef-name via the 'typedef'
+/// type specifier.
+class TypedefDecl : public TypedefNameDecl {
+  TypedefDecl(DeclContext *DC, SourceLocation StartLoc, SourceLocation IdLoc,
+              IdentifierInfo *Id, TypeSourceInfo *TInfo)
+    : TypedefNameDecl(Typedef, DC, StartLoc, IdLoc, Id, TInfo) {}
+
+public:
+  static TypedefDecl *Create(ASTContext &C, DeclContext *DC,
+                             SourceLocation StartLoc, SourceLocation IdLoc,
+                             IdentifierInfo *Id, TypeSourceInfo *TInfo);
+
   SourceRange getSourceRange() const;
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classof(const TypedefDecl *D) { return true; }
   static bool classofKind(Kind K) { return K == Typedef; }
+};
+
+/// TypeAliasDecl - Represents the declaration of a typedef-name via a C++0x
+/// alias-declaration.
+class TypeAliasDecl : public TypedefNameDecl {
+  TypeAliasDecl(DeclContext *DC, SourceLocation StartLoc, SourceLocation IdLoc,
+                IdentifierInfo *Id, TypeSourceInfo *TInfo)
+    : TypedefNameDecl(TypeAlias, DC, StartLoc, IdLoc, Id, TInfo) {}
+
+public:
+  static TypeAliasDecl *Create(ASTContext &C, DeclContext *DC,
+                               SourceLocation StartLoc, SourceLocation IdLoc,
+                               IdentifierInfo *Id, TypeSourceInfo *TInfo);
+
+  SourceRange getSourceRange() const;
+
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classof(const TypeAliasDecl *D) { return true; }
+  static bool classofKind(Kind K) { return K == TypeAlias; }
 };
 
 /// TagDecl - Represents the declaration of a struct/union/class/enum.
@@ -2087,17 +2136,17 @@ private:
   // to be used for the (uncommon) case of out-of-line declarations.
   typedef QualifierInfo ExtInfo;
 
-  /// TypedefDeclOrQualifier - If the (out-of-line) tag declaration name
+  /// TypedefNameDeclOrQualifier - If the (out-of-line) tag declaration name
   /// is qualified, it points to the qualifier info (nns and range);
   /// otherwise, if the tag declaration is anonymous and it is part of
-  /// a typedef, it points to the TypedefDecl (used for mangling);
-  /// otherwise, it is a null (TypedefDecl) pointer.
-  llvm::PointerUnion<TypedefDecl*, ExtInfo*> TypedefDeclOrQualifier;
+  /// a typedef or alias, it points to the TypedefNameDecl (used for mangling);
+  /// otherwise, it is a null (TypedefNameDecl) pointer.
+  llvm::PointerUnion<TypedefNameDecl*, ExtInfo*> TypedefNameDeclOrQualifier;
 
-  bool hasExtInfo() const { return TypedefDeclOrQualifier.is<ExtInfo*>(); }
-  ExtInfo *getExtInfo() { return TypedefDeclOrQualifier.get<ExtInfo*>(); }
+  bool hasExtInfo() const { return TypedefNameDeclOrQualifier.is<ExtInfo*>(); }
+  ExtInfo *getExtInfo() { return TypedefNameDeclOrQualifier.get<ExtInfo*>(); }
   const ExtInfo *getExtInfo() const {
-    return TypedefDeclOrQualifier.get<ExtInfo*>();
+    return TypedefNameDeclOrQualifier.get<ExtInfo*>();
   }
 
 protected:
@@ -2105,7 +2154,7 @@ protected:
           SourceLocation L, IdentifierInfo *Id,
           TagDecl *PrevDecl, SourceLocation StartL)
     : TypeDecl(DK, DC, L, Id, StartL), DeclContext(DK),
-      TypedefDeclOrQualifier((TypedefDecl*) 0) {
+      TypedefNameDeclOrQualifier((TypedefNameDecl*) 0) {
     assert((DK != Enum || TK == TTK_Enum) &&
            "EnumDecl not matched with TTK_Enum");
     TagDeclKind = TK;
@@ -2210,11 +2259,11 @@ public:
   bool isUnion()  const { return getTagKind() == TTK_Union; }
   bool isEnum()   const { return getTagKind() == TTK_Enum; }
 
-  TypedefDecl *getTypedefForAnonDecl() const {
-    return hasExtInfo() ? 0 : TypedefDeclOrQualifier.get<TypedefDecl*>();
+  TypedefNameDecl *getTypedefNameForAnonDecl() const {
+    return hasExtInfo() ? 0 : TypedefNameDeclOrQualifier.get<TypedefNameDecl*>();
   }
 
-  void setTypedefForAnonDecl(TypedefDecl *TDD);
+  void setTypedefNameForAnonDecl(TypedefNameDecl *TDD);
 
   /// \brief Retrieve the nested-name-specifier that qualifies the name of this
   /// declaration, if it was present in the source.
@@ -2389,7 +2438,7 @@ public:
     return IntegerType.dyn_cast<TypeSourceInfo*>();
   }
 
-  /// \brief Returns the width in bits requred to store all the
+  /// \brief Returns the width in bits required to store all the
   /// non-negative enumerators of this enum.
   unsigned getNumPositiveBits() const {
     return NumPositiveBits;
@@ -2399,7 +2448,7 @@ public:
     assert(NumPositiveBits == Num && "can't store this bitcount");
   }
 
-  /// \brief Returns the width in bits requred to store all the
+  /// \brief Returns the width in bits required to store all the
   /// negative enumerators of this enum.  These widths include
   /// the rightmost leading 1;  that is:
   /// 

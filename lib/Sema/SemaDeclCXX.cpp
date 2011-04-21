@@ -288,17 +288,37 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old) {
     ParmVarDecl *NewParam = New->getParamDecl(p);
 
     if (OldParam->hasDefaultArg() && NewParam->hasDefaultArg()) {
+
+      unsigned DiagDefaultParamID =
+        diag::err_param_default_argument_redefinition;
+
+      // MSVC accepts that default parameters be redefined for member functions
+      // of template class. The new default parameter's value is ignored.
+      Invalid = true;
+      if (getLangOptions().Microsoft) {
+        CXXMethodDecl* MD = dyn_cast<CXXMethodDecl>(New);
+        if (MD && MD->getParent()->getDescribedClassTemplate()) {
+          // Merge the old default argument into the new parameter.
+          NewParam->setHasInheritedDefaultArg();
+          if (OldParam->hasUninstantiatedDefaultArg())
+            NewParam->setUninstantiatedDefaultArg(
+                                      OldParam->getUninstantiatedDefaultArg());
+          else
+            NewParam->setDefaultArg(OldParam->getInit());
+          DiagDefaultParamID = diag::war_param_default_argument_redefinition;
+          Invalid = false;
+        }
+      }
+      
       // FIXME: If we knew where the '=' was, we could easily provide a fix-it 
       // hint here. Alternatively, we could walk the type-source information
       // for NewParam to find the last source location in the type... but it
       // isn't worth the effort right now. This is the kind of test case that
       // is hard to get right:
-      
       //   int f(int);
       //   void g(int (*fp)(int) = f);
       //   void g(int (*fp)(int) = &f);
-      Diag(NewParam->getLocation(),
-           diag::err_param_default_argument_redefinition)
+      Diag(NewParam->getLocation(), DiagDefaultParamID)
         << NewParam->getDefaultArgRange();
       
       // Look for the function declaration where the default argument was
@@ -313,7 +333,6 @@ bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old) {
       
       Diag(OldParam->getLocation(), diag::note_previous_definition)
         << OldParam->getDefaultArgRange();
-      Invalid = true;
     } else if (OldParam->hasDefaultArg()) {
       // Merge the old default argument into the new parameter.
       // It's important to use getInit() here;  getDefaultArg()
@@ -1765,9 +1784,9 @@ BuildImplicitBaseInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
 
     CXXCastPath BasePath;
     BasePath.push_back(BaseSpec);
-    SemaRef.ImpCastExprToType(CopyCtorArg, ArgTy,
-                              CK_UncheckedDerivedToBase,
-                              VK_LValue, &BasePath);
+    CopyCtorArg = SemaRef.ImpCastExprToType(CopyCtorArg, ArgTy,
+                                            CK_UncheckedDerivedToBase,
+                                            VK_LValue, &BasePath).take();
 
     InitializationKind InitKind
       = InitializationKind::CreateDirect(Constructor->getLocation(),
@@ -3397,9 +3416,9 @@ QualType Sema::CheckDestructorDeclarator(Declarator &D, QualType R,
   //   be used as the identifier in the declarator for a destructor
   //   declaration.
   QualType DeclaratorType = GetTypeFromParser(D.getName().DestructorName);
-  if (isa<TypedefType>(DeclaratorType))
+  if (const TypedefType *TT = DeclaratorType->getAs<TypedefType>())
     Diag(D.getIdentifierLoc(), diag::err_destructor_typedef_name)
-      << DeclaratorType;
+      << DeclaratorType << isa<TypeAliasDecl>(TT->getDecl());
 
   // C++ [class.dtor]p2:
   //   A destructor is used to destroy objects of its class type. A
@@ -4032,8 +4051,8 @@ IsEquivalentForUsingDecl(ASTContext &Context, NamedDecl *D1, NamedDecl *D2,
     return true;
   }
 
-  if (TypedefDecl *TD1 = dyn_cast<TypedefDecl>(D1))
-    if (TypedefDecl *TD2 = dyn_cast<TypedefDecl>(D2)) {
+  if (TypedefNameDecl *TD1 = dyn_cast<TypedefNameDecl>(D1))
+    if (TypedefNameDecl *TD2 = dyn_cast<TypedefNameDecl>(D2)) {
       SuppressRedeclaration = true;
       return Context.hasSameType(TD1->getUnderlyingType(),
                                  TD2->getUnderlyingType());
@@ -4630,6 +4649,61 @@ bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
     << SS.getRange();
 
   return true;
+}
+
+Decl *Sema::ActOnAliasDeclaration(Scope *S,
+                                  AccessSpecifier AS,
+                                  SourceLocation UsingLoc,
+                                  UnqualifiedId &Name,
+                                  TypeResult Type) {
+  assert((S->getFlags() & Scope::DeclScope) &&
+         "got alias-declaration outside of declaration scope");
+
+  if (Type.isInvalid())
+    return 0;
+
+  bool Invalid = false;
+  DeclarationNameInfo NameInfo = GetNameFromUnqualifiedId(Name);
+  TypeSourceInfo *TInfo = 0;
+  QualType T = GetTypeFromParser(Type.get(), &TInfo);
+
+  if (DiagnoseClassNameShadow(CurContext, NameInfo))
+    return 0;
+
+  if (DiagnoseUnexpandedParameterPack(Name.StartLocation, TInfo,
+                                      UPPC_DeclarationType))
+    Invalid = true;
+
+  LookupResult Previous(*this, NameInfo, LookupOrdinaryName, ForRedeclaration);
+  LookupName(Previous, S);
+
+  // Warn about shadowing the name of a template parameter.
+  if (Previous.isSingleResult() &&
+      Previous.getFoundDecl()->isTemplateParameter()) {
+    if (DiagnoseTemplateParameterShadow(Name.StartLocation,
+                                        Previous.getFoundDecl()))
+      Invalid = true;
+    Previous.clear();
+  }
+
+  assert(Name.Kind == UnqualifiedId::IK_Identifier &&
+         "name in alias declaration must be an identifier");
+  TypeAliasDecl *NewTD = TypeAliasDecl::Create(Context, CurContext, UsingLoc,
+                                               Name.StartLocation,
+                                               Name.Identifier, TInfo);
+
+  NewTD->setAccess(AS);
+
+  if (Invalid)
+    NewTD->setInvalidDecl();
+
+  bool Redeclaration = false;
+  ActOnTypedefNameDecl(S, CurContext, NewTD, Previous, Redeclaration);
+
+  if (!Redeclaration)
+    PushOnScopeChains(NewTD, S);
+
+  return NewTD;
 }
 
 Decl *Sema::ActOnNamespaceAliasDef(Scope *S,
@@ -5603,21 +5677,19 @@ void Sema::DefineImplicitCopyAssignment(SourceLocation CurrentLocation,
     // Construct the "from" expression, which is an implicit cast to the
     // appropriately-qualified base type.
     Expr *From = OtherRef;
-    ImpCastExprToType(From, Context.getQualifiedType(BaseType, OtherQuals),
-                      CK_UncheckedDerivedToBase,
-                      VK_LValue, &BasePath);
+    From = ImpCastExprToType(From, Context.getQualifiedType(BaseType, OtherQuals),
+                             CK_UncheckedDerivedToBase,
+                             VK_LValue, &BasePath).take();
 
     // Dereference "this".
     ExprResult To = CreateBuiltinUnaryOp(Loc, UO_Deref, This);
     
     // Implicitly cast "this" to the appropriately-qualified base type.
-    Expr *ToE = To.takeAs<Expr>();
-    ImpCastExprToType(ToE, 
-                      Context.getCVRQualifiedType(BaseType,
-                                      CopyAssignOperator->getTypeQualifiers()),
-                      CK_UncheckedDerivedToBase, 
-                      VK_LValue, &BasePath);
-    To = Owned(ToE);
+    To = ImpCastExprToType(To.take(), 
+                           Context.getCVRQualifiedType(BaseType,
+                                     CopyAssignOperator->getTypeQualifiers()),
+                           CK_UncheckedDerivedToBase, 
+                           VK_LValue, &BasePath);
 
     // Build the copy.
     StmtResult Copy = BuildSingleCopyAssign(*this, Loc, BaseType,

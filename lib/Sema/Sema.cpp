@@ -203,36 +203,36 @@ Sema::~Sema() {
 /// ImpCastExprToType - If Expr is not of type 'Type', insert an implicit cast.
 /// If there is already an implicit cast, merge into the existing one.
 /// The result is of the given category.
-void Sema::ImpCastExprToType(Expr *&Expr, QualType Ty,
-                             CastKind Kind, ExprValueKind VK,
-                             const CXXCastPath *BasePath) {
-  QualType ExprTy = Context.getCanonicalType(Expr->getType());
+ExprResult Sema::ImpCastExprToType(Expr *E, QualType Ty,
+                                   CastKind Kind, ExprValueKind VK,
+                                   const CXXCastPath *BasePath) {
+  QualType ExprTy = Context.getCanonicalType(E->getType());
   QualType TypeTy = Context.getCanonicalType(Ty);
 
   if (ExprTy == TypeTy)
-    return;
+    return Owned(E);
 
   // If this is a derived-to-base cast to a through a virtual base, we
   // need a vtable.
   if (Kind == CK_DerivedToBase && 
       BasePathInvolvesVirtualBase(*BasePath)) {
-    QualType T = Expr->getType();
+    QualType T = E->getType();
     if (const PointerType *Pointer = T->getAs<PointerType>())
       T = Pointer->getPointeeType();
     if (const RecordType *RecordTy = T->getAs<RecordType>())
-      MarkVTableUsed(Expr->getLocStart(), 
+      MarkVTableUsed(E->getLocStart(), 
                      cast<CXXRecordDecl>(RecordTy->getDecl()));
   }
 
-  if (ImplicitCastExpr *ImpCast = dyn_cast<ImplicitCastExpr>(Expr)) {
+  if (ImplicitCastExpr *ImpCast = dyn_cast<ImplicitCastExpr>(E)) {
     if (ImpCast->getCastKind() == Kind && (!BasePath || BasePath->empty())) {
       ImpCast->setType(Ty);
       ImpCast->setValueKind(VK);
-      return;
+      return Owned(E);
     }
   }
 
-  Expr = ImplicitCastExpr::Create(Context, Ty, Kind, Expr, BasePath, VK);
+  return Owned(ImplicitCastExpr::Create(Context, Ty, Kind, E, BasePath, VK));
 }
 
 /// ScalarTypeToBooleanCastKind - Returns the cast kind corresponding
@@ -473,16 +473,30 @@ void Sema::ActOnEndOfTranslationUnit() {
           DiagD = FD;
         if (DiagD->isDeleted())
           continue; // Deleted functions are supposed to be unused.
-        Diag(DiagD->getLocation(),
-             isa<CXXMethodDecl>(DiagD) ? diag::warn_unused_member_function
-                                       : diag::warn_unused_function)
-              << DiagD->getDeclName();
+        if (DiagD->isReferenced()) {
+          if (isa<CXXMethodDecl>(DiagD))
+            Diag(DiagD->getLocation(), diag::warn_unneeded_member_function)
+                  << DiagD->getDeclName();
+          else
+            Diag(DiagD->getLocation(), diag::warn_unneeded_internal_decl)
+                  << /*function*/0 << DiagD->getDeclName();
+        } else {
+          Diag(DiagD->getLocation(),
+               isa<CXXMethodDecl>(DiagD) ? diag::warn_unused_member_function
+                                         : diag::warn_unused_function)
+                << DiagD->getDeclName();
+        }
       } else {
         const VarDecl *DiagD = cast<VarDecl>(*I)->getDefinition();
         if (!DiagD)
           DiagD = cast<VarDecl>(*I);
-        Diag(DiagD->getLocation(), diag::warn_unused_variable)
-              << DiagD->getDeclName();
+        if (DiagD->isReferenced()) {
+          Diag(DiagD->getLocation(), diag::warn_unneeded_internal_decl)
+                << /*variable*/1 << DiagD->getDeclName();
+        } else {
+          Diag(DiagD->getLocation(), diag::warn_unused_variable)
+                << DiagD->getDeclName();
+        }
       }
     }
 

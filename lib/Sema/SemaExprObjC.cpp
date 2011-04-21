@@ -62,7 +62,8 @@ ExprResult Sema::ParseObjCStringLiteral(SourceLocation *AtLocs,
 
     // Create the aggregate string with the appropriate content and location
     // information.
-    S = StringLiteral::Create(Context, &StrBuf[0], StrBuf.size(), false,
+    S = StringLiteral::Create(Context, &StrBuf[0], StrBuf.size(),
+                              /*Wide=*/false, /*Pascal=*/false,
                               Context.getPointerType(Context.CharTy),
                               &StrLocs[0], StrLocs.size());
   }
@@ -246,7 +247,10 @@ bool Sema::CheckMessageArgumentTypes(Expr **Args, unsigned NumArgs,
       if (Args[i]->isTypeDependent())
         continue;
 
-      DefaultArgumentPromotion(Args[i]);
+      ExprResult Result = DefaultArgumentPromotion(Args[i]);
+      if (Result.isInvalid())
+        return true;
+      Args[i] = Result.take();
     }
 
     unsigned DiagID = isClassMessage ? diag::warn_class_method_not_found :
@@ -305,7 +309,9 @@ bool Sema::CheckMessageArgumentTypes(Expr **Args, unsigned NumArgs,
       if (Args[i]->isTypeDependent())
         continue;
 
-      IsError |= DefaultVariadicArgumentPromotion(Args[i], VariadicMethod, 0);
+      ExprResult Arg = DefaultVariadicArgumentPromotion(Args[i], VariadicMethod, 0);
+      IsError |= Arg.isInvalid();
+      Args[i] = Arg.take();
     }
   } else {
     // Check for extra arguments to non-variadic methods.
@@ -317,6 +323,12 @@ bool Sema::CheckMessageArgumentTypes(Expr **Args, unsigned NumArgs,
         << SourceRange(Args[NumNamedArgs]->getLocStart(),
                        Args[NumArgs-1]->getLocEnd());
     }
+  }
+  // diagnose nonnull arguments.
+  for (specific_attr_iterator<NonNullAttr>
+       i = Method->specific_attr_begin<NonNullAttr>(),
+       e = Method->specific_attr_end<NonNullAttr>(); i != e; ++i) {
+    CheckNonNullArguments(*i, Args, lbrac);
   }
 
   DiagnoseSentinelCalls(Method, lbrac, Args, NumArgs);
@@ -414,6 +426,13 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
                           bool Super) {
   const ObjCInterfaceType *IFaceT = OPT->getInterfaceType();
   ObjCInterfaceDecl *IFace = IFaceT->getDecl();
+  
+  if (MemberName.getNameKind() != DeclarationName::Identifier) {
+    Diag(MemberLoc, diag::err_invalid_property_name)
+      << MemberName << QualType(OPT, 0);
+    return ExprError();
+  }
+  
   IdentifierInfo *Member = MemberName.getAsIdentifierInfo();
 
   if (IFace->isForwardDecl()) {
@@ -1040,7 +1059,10 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
 
     // If necessary, apply function/array conversion to the receiver.
     // C99 6.7.5.3p[7,8].
-    DefaultFunctionArrayLvalueConversion(Receiver);
+    ExprResult Result = DefaultFunctionArrayLvalueConversion(Receiver);
+    if (Result.isInvalid())
+      return ExprError();
+    Receiver = Result.take();
     ReceiverType = Receiver->getType();
   }
 
@@ -1162,37 +1184,42 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
           << ReceiverType 
           << Receiver->getSourceRange();
         if (ReceiverType->isPointerType())
-          ImpCastExprToType(Receiver, Context.getObjCIdType(), 
-                            CK_BitCast);
+          Receiver = ImpCastExprToType(Receiver, Context.getObjCIdType(), 
+                            CK_BitCast).take();
         else {
           // TODO: specialized warning on null receivers?
           bool IsNull = Receiver->isNullPointerConstant(Context,
                                               Expr::NPC_ValueDependentIsNull);
-          ImpCastExprToType(Receiver, Context.getObjCIdType(),
-                            IsNull ? CK_NullToPointer : CK_IntegralToPointer);
+          Receiver = ImpCastExprToType(Receiver, Context.getObjCIdType(),
+                            IsNull ? CK_NullToPointer : CK_IntegralToPointer).take();
         }
         ReceiverType = Receiver->getType();
       } 
-      else if (getLangOptions().CPlusPlus &&
-               !PerformContextuallyConvertToObjCId(Receiver)) {
-        if (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(Receiver)) {
-          Receiver = ICE->getSubExpr();
-          ReceiverType = Receiver->getType();
+      else {
+        ExprResult ReceiverRes;
+        if (getLangOptions().CPlusPlus)
+          ReceiverRes = PerformContextuallyConvertToObjCId(Receiver);
+        if (ReceiverRes.isUsable()) {
+          Receiver = ReceiverRes.take();
+          if (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(Receiver)) {
+            Receiver = ICE->getSubExpr();
+            ReceiverType = Receiver->getType();
+          }
+          return BuildInstanceMessage(Receiver,
+                                      ReceiverType,
+                                      SuperLoc,
+                                      Sel,
+                                      Method,
+                                      LBracLoc,
+                                      SelectorLoc,
+                                      RBracLoc,
+                                      move(ArgsIn));
+        } else {
+          // Reject other random receiver types (e.g. structs).
+          Diag(Loc, diag::err_bad_receiver_type)
+            << ReceiverType << Receiver->getSourceRange();
+          return ExprError();
         }
-        return BuildInstanceMessage(Receiver,
-                                    ReceiverType,
-                                    SuperLoc,
-                                    Sel,
-                                    Method,
-                                    LBracLoc,
-                                    SelectorLoc,
-                                    RBracLoc,
-                                    move(ArgsIn));
-      } else {
-        // Reject other random receiver types (e.g. structs).
-        Diag(Loc, diag::err_bad_receiver_type)
-          << ReceiverType << Receiver->getSourceRange();
-        return ExprError();
       }
     }
   }

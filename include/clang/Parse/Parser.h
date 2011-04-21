@@ -690,7 +690,7 @@ private:
 
   /// LateParsedDeclarationsContainer - During parsing of a top (non-nested)
   /// C++ class, its method declarations that contain parts that won't be
-  /// parsed until after the definiton is completed (C++ [class.mem]p2),
+  /// parsed until after the definition is completed (C++ [class.mem]p2),
   /// the method declarations and possibly attached inline definitions
   /// will be stored here with the tokens that will be parsed to create those entities.
   typedef llvm::SmallVector<LateParsedDeclaration*, 2> LateParsedDeclarationsContainer;
@@ -1101,6 +1101,8 @@ private:
 
   ExprResult ParseStringLiteralExpression();
 
+  ExprResult ParseGenericSelectionExpression();
+
   //===--------------------------------------------------------------------===//
   // C++ Expressions
   ExprResult ParseCXXIdExpression(bool isAddressOfOperand = false);
@@ -1288,6 +1290,15 @@ private:
     DSC_top_level // top-level/namespace declaration context
   };
 
+  /// Information on a C++0x for-range-initializer found while parsing a
+  /// declaration which turns out to be a for-range-declaration.
+  struct ForRangeInit {
+    SourceLocation ColonLoc;
+    ExprResult RangeExpr;
+
+    bool ParsedForRangeDecl() { return !ColonLoc.isInvalid(); }
+  };
+
   DeclGroupPtrTy ParseDeclaration(StmtVector &Stmts,
                                   unsigned Context, SourceLocation &DeclEnd,
                                   ParsedAttributesWithRange &attrs);
@@ -1295,11 +1306,16 @@ private:
                                         unsigned Context,
                                         SourceLocation &DeclEnd,
                                         ParsedAttributes &attrs,
-                                        bool RequireSemi);
+                                        bool RequireSemi,
+                                        ForRangeInit *FRI = 0);
   DeclGroupPtrTy ParseDeclGroup(ParsingDeclSpec &DS, unsigned Context,
                                 bool AllowFunctionDefinitions,
-                                SourceLocation *DeclEnd = 0);
+                                SourceLocation *DeclEnd = 0,
+                                ForRangeInit *FRI = 0);
   Decl *ParseDeclarationAfterDeclarator(Declarator &D,
+               const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo());
+  bool ParseAttributesAfterDeclarator(Declarator &D);
+  Decl *ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
                const ParsedTemplateInfo &TemplateInfo = ParsedTemplateInfo());
   Decl *ParseFunctionStatementBody(Decl *Decl, ParseScope &BodyScope);
   Decl *ParseFunctionTryBlock(Decl *Decl, ParseScope &BodyScope);

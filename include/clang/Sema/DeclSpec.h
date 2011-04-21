@@ -158,7 +158,7 @@ public:
   /// A scope specifier is present, but may be valid or invalid.
   bool isNotEmpty() const { return !isEmpty(); }
 
-  /// An error occured during parsing of the scope specifier.
+  /// An error occurred during parsing of the scope specifier.
   bool isInvalid() const { return isNotEmpty() && getScopeRep() == 0; }
   /// A scope specifier is present, and it refers to a real scope.
   bool isValid() const { return isNotEmpty() && getScopeRep() != 0; }
@@ -250,6 +250,7 @@ public:
   static const TST TST_typeofExpr = clang::TST_typeofExpr;
   static const TST TST_decltype = clang::TST_decltype;
   static const TST TST_auto = clang::TST_auto;
+  static const TST TST_unknown_anytype = clang::TST_unknown_anytype;
   static const TST TST_error = clang::TST_error;
 
   // type-qualifiers
@@ -1324,7 +1325,8 @@ public:
     TemplateParamContext,// Within a template parameter list.
     CXXCatchContext,     // C++ catch exception-declaration
     BlockLiteralContext,  // Block literal declarator.
-    TemplateTypeArgContext // Template type argument.
+    TemplateTypeArgContext, // Template type argument.
+    AliasDeclContext     // C++0x alias-declaration.
   };
 
 private:
@@ -1465,6 +1467,7 @@ public:
       return false;
 
     case TypeNameContext:
+    case AliasDeclContext:
     case PrototypeContext:
     case ObjCPrototypeContext:
     case TemplateParamContext:
@@ -1493,6 +1496,7 @@ public:
       return true;
 
     case TypeNameContext:
+    case AliasDeclContext:
     case ObjCPrototypeContext:
     case BlockLiteralContext:
     case TemplateTypeArgContext:
@@ -1520,6 +1524,7 @@ public:
     case TemplateParamContext:
     case CXXCatchContext:
     case TypeNameContext:
+    case AliasDeclContext:
     case BlockLiteralContext:
     case TemplateTypeArgContext:
       return false;

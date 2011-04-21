@@ -624,7 +624,11 @@ namespace clang {
       /// \brief NSConstantString type
       SPECIAL_TYPE_NS_CONSTANT_STRING          = 15,
       /// \brief Whether __[u]int128_t identifier is installed.
-      SPECIAL_TYPE_INT128_INSTALLED            = 16
+      SPECIAL_TYPE_INT128_INSTALLED            = 16,
+      /// \brief Cached "auto" deduction type.
+      SPECIAL_TYPE_AUTO_DEDUCT                 = 17,
+      /// \brief Cached "auto &&" deduction type.
+      SPECIAL_TYPE_AUTO_RREF_DEDUCT            = 18
     };
 
     /// \brief Record codes for each kind of declaration.
@@ -638,6 +642,8 @@ namespace clang {
       DECL_TRANSLATION_UNIT = 50,
       /// \brief A TypedefDecl record.
       DECL_TYPEDEF,
+      /// \brief A TypeAliasDecl record.
+      DECL_TYPEALIAS,
       /// \brief An EnumDecl record.
       DECL_ENUM,
       /// \brief A RecordDecl record.
@@ -874,6 +880,8 @@ namespace clang {
       EXPR_BLOCK,
       /// \brief A BlockDeclRef record.
       EXPR_BLOCK_DECL_REF,
+      /// \brief A GenericSelectionExpr record.
+      EXPR_GENERIC_SELECTION,
       
       // Objective-C
 
@@ -915,6 +923,8 @@ namespace clang {
       STMT_CXX_CATCH,
       /// \brief A CXXTryStmt record.
       STMT_CXX_TRY,
+      /// \brief A CXXForRangeStmt record.
+      STMT_CXX_FOR_RANGE,
 
       /// \brief A CXXOperatorCallExpr record.
       EXPR_CXX_OPERATOR_CALL,

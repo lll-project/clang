@@ -81,6 +81,9 @@ public:
     CGF.ErrorUnsupported(S, "aggregate expression");
   }
   void VisitParenExpr(ParenExpr *PE) { Visit(PE->getSubExpr()); }
+  void VisitGenericSelectionExpr(GenericSelectionExpr *GE) {
+    Visit(GE->getResultExpr());
+  }
   void VisitUnaryExtension(UnaryOperator *E) { Visit(E->getSubExpr()); }
 
   // l-values.
@@ -249,11 +252,6 @@ void AggExprEmitter::VisitOpaqueValueExpr(OpaqueValueExpr *e) {
 }
 
 void AggExprEmitter::VisitCastExpr(CastExpr *E) {
-  if (Dest.isIgnored() && E->getCastKind() != CK_Dynamic) {
-    Visit(E->getSubExpr());
-    return;
-  }
-
   switch (E->getCastKind()) {
   case CK_Dynamic: {
     assert(isa<CXXDynamicCastExpr>(E) && "CK_Dynamic without a dynamic_cast?");
@@ -270,6 +268,8 @@ void AggExprEmitter::VisitCastExpr(CastExpr *E) {
   }
       
   case CK_ToUnion: {
+    if (Dest.isIgnored()) break;
+
     // GCC union extension
     QualType Ty = E->getSubExpr()->getType();
     QualType PtrTy = CGF.getContext().getPointerType(Ty);
@@ -310,10 +310,6 @@ void AggExprEmitter::VisitCastExpr(CastExpr *E) {
     llvm_unreachable("should not be emitting lvalue bitcast as rvalue");
     break;
 
-  case CK_ResolveUnknownAnyType:
-    EmitAggLoadOfLValue(E);
-    break;
-      
   case CK_Dependent:
   case CK_BitCast:
   case CK_ArrayToPointerDecay:
@@ -525,9 +521,8 @@ void AggExprEmitter::VisitImplicitValueInitExpr(ImplicitValueInitExpr *E) {
 /// zero to memory, return true.  This can return false if uncertain, so it just
 /// handles simple cases.
 static bool isSimpleZero(const Expr *E, CodeGenFunction &CGF) {
-  // (0)
-  if (const ParenExpr *PE = dyn_cast<ParenExpr>(E))
-    return isSimpleZero(PE->getSubExpr(), CGF);
+  E = E->IgnoreParens();
+
   // 0
   if (const IntegerLiteral *IL = dyn_cast<IntegerLiteral>(E))
     return IL->getValue() == 0;
@@ -646,6 +641,8 @@ void AggExprEmitter::VisitInitListExpr(InitListExpr *E) {
       
       if (i < NumInitElements)
         EmitInitializationToLValue(E->getInit(i), LV, ElementType);
+      else if (Expr *filler = E->getArrayFiller())
+        EmitInitializationToLValue(filler, LV, ElementType);
       else
         EmitNullInitializationToLValue(LV, ElementType);
       
@@ -750,8 +747,7 @@ void AggExprEmitter::VisitInitListExpr(InitListExpr *E) {
 /// non-zero bytes that will be stored when outputting the initializer for the
 /// specified initializer expression.
 static uint64_t GetNumNonZeroBytesInInit(const Expr *E, CodeGenFunction &CGF) {
-  if (const ParenExpr *PE = dyn_cast<ParenExpr>(E))
-    return GetNumNonZeroBytesInInit(PE->getSubExpr(), CGF);
+  E = E->IgnoreParens();
 
   // 0 and 0.0 won't require any non-zero stores!
   if (isSimpleZero(E, CGF)) return 0;

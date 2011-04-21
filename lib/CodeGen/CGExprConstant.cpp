@@ -457,6 +457,10 @@ public:
     return Visit(PE->getSubExpr());
   }
 
+  llvm::Constant *VisitGenericSelectionExpr(GenericSelectionExpr *GE) {
+    return Visit(GE->getResultExpr());
+  }
+
   llvm::Constant *VisitCompoundLiteralExpr(CompoundLiteralExpr *E) {
     return Visit(E->getInitializer());
   }
@@ -552,7 +556,6 @@ public:
     case CK_GetObjCProperty:
     case CK_ToVoid:
     case CK_Dynamic:
-    case CK_ResolveUnknownAnyType:
       return 0;
 
     // These might need to be supported for constexpr.
@@ -664,8 +667,16 @@ public:
 
     // Initialize remaining array elements.
     // FIXME: This doesn't handle member pointers correctly!
+    llvm::Constant *fillC;
+    if (Expr *filler = ILE->getArrayFiller())
+      fillC = CGM.EmitConstantExpr(filler, filler->getType(), CGF);
+    else
+      fillC = llvm::Constant::getNullValue(ElemTy);
+    if (!fillC)
+      return 0;
+    RewriteType |= (fillC->getType() != ElemTy);
     for (; i < NumElements; ++i)
-      Elts.push_back(llvm::Constant::getNullValue(ElemTy));
+      Elts.push_back(fillC);
 
     if (RewriteType) {
       // FIXME: Try to avoid packing the array

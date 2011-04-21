@@ -748,7 +748,7 @@ void CXXNameMangler::mangleUnqualifiedName(const NamedDecl *ND,
     
     // We must have an anonymous struct.
     const TagDecl *TD = cast<TagDecl>(ND);
-    if (const TypedefDecl *D = TD->getTypedefForAnonDecl()) {
+    if (const TypedefNameDecl *D = TD->getTypedefNameForAnonDecl()) {
       assert(TD->getDeclContext() == D->getDeclContext() &&
              "Typedef should not be in another decl context!");
       assert(D->getDeclName().getAsIdentifierInfo() &&
@@ -1750,6 +1750,7 @@ void CXXNameMangler::mangleExpression(const Expr *E, unsigned Arity) {
   case Expr::ChooseExprClass:
   case Expr::CompoundLiteralExprClass:
   case Expr::ExtVectorElementExprClass:
+  case Expr::GenericSelectionExprClass:
   case Expr::ObjCEncodeExprClass:
   case Expr::ObjCIsaExprClass:
   case Expr::ObjCIvarRefExprClass:
@@ -1966,7 +1967,7 @@ void CXXNameMangler::mangleExpression(const Expr *E, unsigned Arity) {
   case Expr::ArraySubscriptExprClass: {
     const ArraySubscriptExpr *AE = cast<ArraySubscriptExpr>(E);
 
-    // Array subscript is treated as a syntactically wierd form of
+    // Array subscript is treated as a syntactically weird form of
     // binary operator.
     Out << "ix";
     mangleExpression(AE->getLHS());

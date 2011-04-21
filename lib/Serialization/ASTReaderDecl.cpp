@@ -93,6 +93,7 @@ namespace clang {
     void VisitNamespaceAliasDecl(NamespaceAliasDecl *D);
     void VisitTypeDecl(TypeDecl *TD);
     void VisitTypedefDecl(TypedefDecl *TD);
+    void VisitTypeAliasDecl(TypeAliasDecl *TD);
     void VisitUnresolvedUsingTypenameDecl(UnresolvedUsingTypenameDecl *D);
     void VisitTagDecl(TagDecl *TD);
     void VisitEnumDecl(EnumDecl *ED);
@@ -213,6 +214,7 @@ void ASTDeclReader::VisitDecl(Decl *D) {
   }
   D->setImplicit(Record[Idx++]);
   D->setUsed(Record[Idx++]);
+  D->setReferenced(Record[Idx++]);
   D->setAccess((AccessSpecifier)Record[Idx++]);
   D->setPCHLevel(Record[Idx++] + (F.Type <= ASTReader::PCH));
 }
@@ -240,6 +242,11 @@ void ASTDeclReader::VisitTypedefDecl(TypedefDecl *TD) {
   TD->setTypeSourceInfo(GetTypeSourceInfo(Record, Idx));
 }
 
+void ASTDeclReader::VisitTypeAliasDecl(TypeAliasDecl *TD) {
+  VisitTypeDecl(TD);
+  TD->setTypeSourceInfo(GetTypeSourceInfo(Record, Idx));
+}
+
 void ASTDeclReader::VisitTagDecl(TagDecl *TD) {
   VisitTypeDecl(TD);
   VisitRedeclarable(TD);
@@ -251,10 +258,10 @@ void ASTDeclReader::VisitTagDecl(TagDecl *TD) {
   if (Record[Idx++]) { // hasExtInfo
     TagDecl::ExtInfo *Info = new (*Reader.getContext()) TagDecl::ExtInfo();
     ReadQualifierInfo(*Info, Record, Idx);
-    TD->TypedefDeclOrQualifier = Info;
+    TD->TypedefNameDeclOrQualifier = Info;
   } else
-    TD->setTypedefForAnonDecl(
-                      cast_or_null<TypedefDecl>(Reader.GetDecl(Record[Idx++])));
+    TD->setTypedefNameForAnonDecl(
+                  cast_or_null<TypedefNameDecl>(Reader.GetDecl(Record[Idx++])));
 }
 
 void ASTDeclReader::VisitEnumDecl(EnumDecl *ED) {
@@ -684,6 +691,7 @@ void ASTDeclReader::VisitVarDecl(VarDecl *VD) {
   VD->setCXXDirectInitializer(Record[Idx++]);
   VD->setExceptionVariable(Record[Idx++]);
   VD->setNRVOVariable(Record[Idx++]);
+  VD->setCXXForRangeDecl(Record[Idx++]);
   if (Record[Idx++])
     VD->setInit(Reader.ReadExpr(F));
 
@@ -1427,6 +1435,10 @@ Decl *ASTReader::ReadDeclRecord(unsigned Index, DeclID ID) {
   case DECL_TYPEDEF:
     D = TypedefDecl::Create(*Context, 0, SourceLocation(), SourceLocation(),
                             0, 0);
+    break;
+  case DECL_TYPEALIAS:
+    D = TypeAliasDecl::Create(*Context, 0, SourceLocation(), SourceLocation(),
+                              0, 0);
     break;
   case DECL_ENUM:
     D = EnumDecl::Create(*Context, Decl::EmptyShell());

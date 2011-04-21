@@ -878,8 +878,8 @@ ASTContext::getTypeInfo(const Type *T) const {
     const TagType *TT = cast<TagType>(T);
 
     if (TT->getDecl()->isInvalidDecl()) {
-      Width = 1;
-      Align = 1;
+      Width = 8;
+      Align = 8;
       break;
     }
 
@@ -907,7 +907,7 @@ ASTContext::getTypeInfo(const Type *T) const {
     return getTypeInfo(cast<ParenType>(T)->getInnerType().getTypePtr());
 
   case Type::Typedef: {
-    const TypedefDecl *Typedef = cast<TypedefType>(T)->getDecl();
+    const TypedefNameDecl *Typedef = cast<TypedefType>(T)->getDecl();
     std::pair<uint64_t, unsigned> Info
       = getTypeInfo(Typedef->getUnderlyingType().getTypePtr());
     // If the typedef has an aligned attribute on it, it overrides any computed
@@ -2032,7 +2032,7 @@ QualType ASTContext::getTypeDeclTypeSlow(const TypeDecl *Decl) const {
   assert(Decl && "Passed null for Decl param");
   assert(!Decl->TypeForDecl && "TypeForDecl present in slow case");
 
-  if (const TypedefDecl *Typedef = dyn_cast<TypedefDecl>(Decl))
+  if (const TypedefNameDecl *Typedef = dyn_cast<TypedefNameDecl>(Decl))
     return getTypedefType(Typedef);
 
   assert(!isa<TemplateTypeParmDecl>(Decl) &&
@@ -2059,9 +2059,10 @@ QualType ASTContext::getTypeDeclTypeSlow(const TypeDecl *Decl) const {
 }
 
 /// getTypedefType - Return the unique reference to the type for the
-/// specified typename decl.
+/// specified typedef name decl.
 QualType
-ASTContext::getTypedefType(const TypedefDecl *Decl, QualType Canonical) const {
+ASTContext::getTypedefType(const TypedefNameDecl *Decl,
+                           QualType Canonical) const {
   if (Decl->TypeForDecl) return QualType(Decl->TypeForDecl, 0);
 
   if (Canonical.isNull())
@@ -2752,6 +2753,22 @@ QualType ASTContext::getAutoType(QualType DeducedType) const {
   if (InsertPos)
     AutoTypes.InsertNode(AT, InsertPos);
   return QualType(AT, 0);
+}
+
+/// getAutoDeductType - Get type pattern for deducing against 'auto'.
+QualType ASTContext::getAutoDeductType() const {
+  if (AutoDeductTy.isNull())
+    AutoDeductTy = getAutoType(QualType());
+  assert(!AutoDeductTy.isNull() && "can't build 'auto' pattern");
+  return AutoDeductTy;
+}
+
+/// getAutoRRefDeductType - Get type pattern for deducing against 'auto &&'.
+QualType ASTContext::getAutoRRefDeductType() const {
+  if (AutoRRefDeductTy.isNull())
+    AutoRRefDeductTy = getRValueReferenceType(getAutoDeductType());
+  assert(!AutoRRefDeductTy.isNull() && "can't build 'auto &&' pattern");
+  return AutoRRefDeductTy;
 }
 
 /// getTagDeclType - Return the unique reference to the type for the
@@ -4561,7 +4578,7 @@ CanQualType ASTContext::getFromTargetType(unsigned Type) const {
 ///
 bool ASTContext::isObjCNSObjectType(QualType Ty) const {
   if (const TypedefType *TDT = dyn_cast<TypedefType>(Ty)) {
-    if (TypedefDecl *TD = TDT->getDecl())
+    if (TypedefNameDecl *TD = TDT->getDecl())
       if (TD->getAttr<ObjCNSObjectAttr>())
         return true;
   }
@@ -4853,7 +4870,7 @@ bool ASTContext::canAssignObjCInterfaces(const ObjCObjectPointerType *LHSOPT,
 }
 
 /// canAssignObjCInterfacesInBlockPointer - This routine is specifically written
-/// for providing type-safty for objective-c pointers used to pass/return 
+/// for providing type-safety for objective-c pointers used to pass/return 
 /// arguments in block literals. When passed as arguments, passing 'A*' where
 /// 'id' is expected is not OK. Passing 'Sub *" where 'Super *" is expected is
 /// not OK. For the return type, the opposite is not OK.
@@ -4946,10 +4963,10 @@ QualType ASTContext::areCommonBaseCompatible(
   const ObjCObjectType *RHS = Rptr->getObjectType();
   const ObjCInterfaceDecl* LDecl = LHS->getInterface();
   const ObjCInterfaceDecl* RDecl = RHS->getInterface();
-  if (!LDecl || !RDecl)
+  if (!LDecl || !RDecl || (LDecl == RDecl))
     return QualType();
   
-  while ((LDecl = LDecl->getSuperClass())) {
+  do {
     LHS = cast<ObjCInterfaceType>(getObjCInterfaceType(LDecl));
     if (canAssignObjCInterfaces(LHS, RHS)) {
       llvm::SmallVector<ObjCProtocolDecl *, 8> Protocols;
@@ -4961,7 +4978,7 @@ QualType ASTContext::areCommonBaseCompatible(
       Result = getObjCObjectPointerType(Result);
       return Result;
     }
-  }
+  } while ((LDecl = LDecl->getSuperClass()));
     
   return QualType();
 }
@@ -4981,10 +4998,47 @@ bool ASTContext::canAssignObjCInterfaces(const ObjCObjectType *LHS,
   if (LHS->getNumProtocols() == 0)
     return true;
 
-  // Okay, we know the LHS has protocol qualifiers.  If the RHS doesn't, then it
-  // isn't a superset.
-  if (RHS->getNumProtocols() == 0)
-    return true;  // FIXME: should return false!
+  // Okay, we know the LHS has protocol qualifiers.  If the RHS doesn't, 
+  // more detailed analysis is required.
+  if (RHS->getNumProtocols() == 0) {
+    // OK, if LHS is a superclass of RHS *and*
+    // this superclass is assignment compatible with LHS.
+    // false otherwise.
+    bool IsSuperClass = 
+      LHS->getInterface()->isSuperClassOf(RHS->getInterface());
+    if (IsSuperClass) {
+      // OK if conversion of LHS to SuperClass results in narrowing of types
+      // ; i.e., SuperClass may implement at least one of the protocols
+      // in LHS's protocol list. Example, SuperObj<P1> = lhs<P1,P2> is ok.
+      // But not SuperObj<P1,P2,P3> = lhs<P1,P2>.
+      llvm::SmallPtrSet<ObjCProtocolDecl *, 8> SuperClassInheritedProtocols;
+      CollectInheritedProtocols(RHS->getInterface(), SuperClassInheritedProtocols);
+      // If super class has no protocols, it is not a match.
+      if (SuperClassInheritedProtocols.empty())
+        return false;
+      
+      for (ObjCObjectType::qual_iterator LHSPI = LHS->qual_begin(),
+           LHSPE = LHS->qual_end();
+           LHSPI != LHSPE; LHSPI++) {
+        bool SuperImplementsProtocol = false;
+        ObjCProtocolDecl *LHSProto = (*LHSPI);
+        
+        for (llvm::SmallPtrSet<ObjCProtocolDecl*,8>::iterator I =
+             SuperClassInheritedProtocols.begin(),
+             E = SuperClassInheritedProtocols.end(); I != E; ++I) {
+          ObjCProtocolDecl *SuperClassProto = (*I);
+          if (SuperClassProto->lookupProtocolNamed(LHSProto->getIdentifier())) {
+            SuperImplementsProtocol = true;
+            break;
+          }
+        }
+        if (!SuperImplementsProtocol)
+          return false;
+      }
+      return true;
+    }
+    return false;
+  }
 
   for (ObjCObjectType::qual_iterator LHSPI = LHS->qual_begin(),
                                      LHSPE = LHS->qual_end();

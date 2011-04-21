@@ -116,6 +116,12 @@ def warn_unused_member_function : Warning<"unused member function %0">,
   InGroup<UnusedMemberFunction>, DefaultIgnore;
 def warn_used_but_marked_unused: Warning<"%0 was marked unused but was used">,
   InGroup<UsedButMarkedUnused>, DefaultIgnore;
+def warn_unneeded_internal_decl : Warning<
+  "%select{function|variable}0 %1 is not needed and will not be emitted">,
+  InGroup<UnneededInternalDecl>, DefaultIgnore;
+def warn_unneeded_member_function : Warning<
+  "member function %0 is not needed and will not be emitted">,
+  InGroup<UnneededMemberFunction>, DefaultIgnore;
 
 def warn_parameter_size: Warning<
   "%0 is a large (%1 bytes) pass-by-value argument; "
@@ -545,7 +551,7 @@ def ext_using_undefined_std : ExtWarn<
   
 // C++ exception specifications
 def err_exception_spec_in_typedef : Error<
-  "exception specifications are not allowed in typedefs">;
+  "exception specifications are not allowed in %select{typedefs|type aliases}0">;
 def err_distant_exception_spec : Error<
   "exception specifications are not allowed beyond a single level "
   "of indirection">;
@@ -795,7 +801,7 @@ def err_destructor_redeclared : Error<"destructor cannot be redeclared">;
 def err_destructor_with_params : Error<"destructor cannot have any parameters">;
 def err_destructor_variadic : Error<"destructor cannot be variadic">;
 def err_destructor_typedef_name : Error<
-  "destructor cannot be declared using a typedef %0 of the class name">;
+  "destructor cannot be declared using a %select{typedef|type alias}1 %0 of the class name">;
 def err_destructor_name : Error<
   "expected the class name after '~' to name the enclosing class">;
 def err_destructor_class_name : Error<
@@ -874,18 +880,19 @@ def warn_field_is_uninit : Warning<"field is uninitialized when used here">,
 def warn_uninit_self_reference_in_init : Warning<
   "variable %0 is uninitialized when used within its own initialization">,
   InGroup<Uninitialized>;
-def warn_uninit_var : Warning<"variable %0 is possibly uninitialized when used here">,
+def warn_uninit_var : Warning<
+  "variable %0 is uninitialized when used here">,
   InGroup<Uninitialized>, DefaultIgnore;
 def warn_maybe_uninit_var :
-  Warning<"variable %0 is possibly uninitialized when used here">,
+  Warning<"variable %0 may be uninitialized when used here">,
     InGroup<UninitializedMaybe>, DefaultIgnore;
 def note_uninit_var_def : Note<
   "variable %0 is declared here">;
 def warn_uninit_var_captured_by_block : Warning<
-  "variable %0 is possibly uninitialized when captured by block">,
+  "variable %0 is uninitialized when captured by block">,
   InGroup<Uninitialized>, DefaultIgnore;
 def warn_maybe_uninit_var_captured_by_block : Warning<
-  "variable %0 is possibly uninitialized when captured by block">,
+  "variable %0 may be uninitialized when captured by block">,
   InGroup<UninitializedMaybe>, DefaultIgnore;
 def note_var_fixit_add_initialization : Note<
   "add initialization to silence this warning">;
@@ -931,7 +938,7 @@ def err_auto_not_allowed : Error<
   "'auto' not allowed %select{in function prototype|in struct member"
   "|in union member|in class member|in exception declaration"
   "|in template parameter|in block literal|in template argument"
-  "|in typedef|in function return type|here}0">;
+  "|in typedef|in type alias|in function return type|here}0">;
 def err_auto_var_requires_init : Error<
   "declaration of variable %0 with type %1 requires an initializer">;
 def err_auto_new_requires_ctor_arg : Error<
@@ -994,6 +1001,28 @@ def err_delegation_unimplemented : Error<
   "delegating constructors are not fully implemented">;
 def err_delegating_initializer_alone : Error<
   "an initializer for a delegating constructor must appear alone">;
+
+// C++0x range-based for loop
+def err_for_range_decl_must_be_var : Error<
+  "for range declaration must declare a variable">;
+def err_for_range_storage_class : Error<
+  "loop variable %0 may not be declared %select{'extern'|'static'|"
+  "'__private_extern__'|'auto'|'register'|'constexpr'}1">;
+def err_type_defined_in_for_range : Error<
+  "types may not be defined in a for range declaration">;
+def err_for_range_deduction_failure : Error<
+  "cannot use type %0 as a range">;
+def err_for_range_incomplete_type : Error<
+  "cannot use incomplete type %0 as a range">;
+def err_for_range_iter_deduction_failure : Error<
+  "cannot use type %0 as an iterator">;
+def err_for_range_member_begin_end_mismatch : Error<
+  "range type %0 has '%select{begin|end}1' member but no '%select{end|begin}1' member">;
+def err_for_range_begin_end_types_differ : Error<
+  "'begin' and 'end' must return the same type (got %0 and %1)">;
+def note_for_range_type : Note<"range has type %0">;
+def note_for_range_begin_end : Note<
+  "selected '%select{begin|end}0' %select{function|template }1%2 with iterator type %3">;
   
 // Objective-C++
 def err_objc_decls_may_only_appear_in_global_scope : Error<
@@ -1150,6 +1179,7 @@ def err_cconv_varargs : Error<
 def err_regparm_mismatch : Error<"function declared with with regparm(%0) "
   "attribute was previously declared "
   "%plural{0:without the regparm|:with the regparm(%1)}1 attribute">;
+def err_invalid_pcs : Error<"Invalid PCS type">;
 
 // Availability attribute
 def warn_availability_unknown_platform : Warning<
@@ -1193,9 +1223,15 @@ def warn_impcast_literal_float_to_integer : Warning<
   "implicit conversion turns literal floating-point number into integer: "
   "%0 to %1">,
   InGroup<DiagGroup<"literal-conversion">>, DefaultIgnore;
+def note_fix_integral_float_as_integer : Note<
+  "this can be rewritten as an integer literal with the exact same value">;
 def warn_impcast_different_enum_types : Warning<
   "implicit conversion from enumeration type %0 to different enumeration type "
   "%1">, InGroup<DiagGroup<"conversion">>;
+def warn_impcast_bool_to_null_pointer : Warning<
+    "initialization of pointer of type %0 to NULL from a constant boolean "
+    "expression">, InGroup<BoolConversions>;
+
 
 def warn_cast_align : Warning<
   "cast from %0 to %1 increases required alignment from %2 to %3">,
@@ -1291,10 +1327,12 @@ def err_ident_list_in_fn_declaration : Error<
 def ext_param_not_declared : Extension<
   "parameter %0 was not declared, defaulting to type 'int'">;
 def err_param_typedef_of_void : Error<
-  "empty parameter list defined with a typedef of 'void' not allowed in C++">;
+  "empty parameter list defined with a %select{typedef|type alias}0 of 'void' not allowed%select{ in C++|}0">;
 def err_param_default_argument : Error<
   "C does not support default arguments">;
 def err_param_default_argument_redefinition : Error<
+  "redefinition of default argument">;
+def war_param_default_argument_redefinition : ExtWarn<
   "redefinition of default argument">;
 def err_param_default_argument_missing : Error<
   "missing default argument on parameter">;
@@ -1365,10 +1403,6 @@ def note_ovl_candidate : Note<"candidate "
     "is the implicit copy constructor|"
     "is the implicit copy assignment operator|"
     "is an inherited constructor}0%1">;
-
-def warn_init_pointer_from_false : Warning<
-    "initialization of pointer of type %0 from literal 'false'">,
-    InGroup<BoolConversions>;
 
 def note_ovl_candidate_inherited_constructor : Note<"inherited from here">;
 def note_ovl_candidate_bad_deduction : Note<
@@ -1941,6 +1975,8 @@ def note_typename_refers_here : Note<
     "referenced member %0 is declared here">;
 def err_typename_missing : Error<
   "missing 'typename' prior to dependent type name '%0%1'">;
+def war_typename_missing : ExtWarn<
+  "missing 'typename' prior to dependent type name '%0%1'">;
 def ext_typename_outside_of_template : ExtWarn<
   "'typename' occurs outside of a template">, InGroup<CXX0x>;
 def err_typename_refers_to_using_value_decl : Error<
@@ -2103,17 +2139,17 @@ def err_redefinition_different_type : Error<
 def err_redefinition_different_kind : Error<
   "redefinition of %0 as different kind of symbol">;
 def err_redefinition_different_typedef : Error<
-  "typedef redefinition with different types (%0 vs %1)">;
+  "%select{typedef|type alias}0 redefinition with different types (%1 vs %2)">;
 def err_tag_reference_non_tag : Error<
-  "elaborated type refers to %select{a non-tag type|a typedef|a template}0">;
+  "elaborated type refers to %select{a non-tag type|a typedef|a type alias|a template}0">;
 def err_tag_reference_conflict : Error<
   "implicit declaration introduced by elaborated type conflicts with "
-  "%select{a declaration|a typedef|a template}0 of the same name">;
+  "%select{a declaration|a typedef|a type alias|a template}0 of the same name">;
 def err_dependent_tag_decl : Error<
   "%select{declaration|definition}0 of %select{struct|union|class|enum}1 "
   "in a dependent scope">;
 def err_tag_definition_of_typedef : Error<
-  "definition of type %0 conflicts with typedef of the same name">;
+  "definition of type %0 conflicts with %select{typedef|type alias}1 of the same name">;
 def err_conflicting_types : Error<"conflicting types for %0">;
 def err_nested_redefinition : Error<"nested redefinition of %0">;
 def err_use_with_wrong_tag : Error<
@@ -2203,6 +2239,8 @@ def err_excess_initializers_in_char_array_initializer : Error<
   "excess elements in char array initializer">;
 def warn_excess_initializers_in_char_array_initializer : ExtWarn<
   "excess elements in char array initializer">;
+def err_initializer_string_for_char_array_too_long : Error<
+  "initializer-string for char array is too long">;
 def warn_initializer_string_for_char_array_too_long : ExtWarn<
   "initializer-string for char array is too long">;
 def warn_missing_field_initializers : Warning<
@@ -2263,6 +2301,8 @@ def note_protected_by_cleanup : Note<
   "jump bypasses initialization of variable with __attribute__((cleanup))">;
 def note_protected_by_vla_typedef : Note<
   "jump bypasses initialization of VLA typedef">;
+def note_protected_by_vla_type_alias : Note<
+  "jump bypasses initialization of VLA type alias">;
 def note_protected_by_vla : Note<
   "jump bypasses initialization of variable length array">;
 def note_protected_by_objc_try : Note<
@@ -2692,6 +2732,8 @@ def err_ref_array_type : Error<
   "cannot refer to declaration with an array type inside block">;
 def err_property_not_found : Error<
   "property %0 not found on object of type %1">;
+def err_invalid_property_name : Error<
+  "%0 is not a valid property name (accessing an object of type %1)">;
 def err_getter_not_found : Error<
   "expected getter method not found on object of type %0">;
 def err_property_not_found_forward_class : Error<
@@ -2813,9 +2855,9 @@ def err_bad_cxx_cast_generic : Error<
 def err_bad_cxx_cast_rvalue : Error<
   "%select{const_cast|static_cast|reinterpret_cast|dynamic_cast|C-style cast|"
   "functional-style cast}0 from rvalue to reference type %2">;
-def err_bad_cxx_cast_const_away : Error<
+def err_bad_cxx_cast_qualifiers_away : Error<
   "%select{const_cast|static_cast|reinterpret_cast|dynamic_cast|C-style cast|"
-  "functional-style cast}0 from %1 to %2 casts away constness">;
+  "functional-style cast}0 from %1 to %2 casts away qualifiers">;
 def err_bad_const_cast_dest : Error<
   "%select{const_cast||||C-style cast|functional-style cast}0 to %2, "
   "which is not a reference, pointer-to-object, or pointer-to-data-member">;
@@ -2901,7 +2943,11 @@ def ext_array_size_conversion : Extension<
   "implicit conversion from array size expression of type %0 to "
   "%select{integral|enumeration}1 type %2 is a C++0x extension">,
   InGroup<CXX0x>;
-  
+def err_address_space_qualified_new : Error<
+  "'new' cannot allocate objects of type %0 in address space '%1'">;
+def err_address_space_qualified_delete : Error<
+  "'delete' cannot delete objects of type %0 in address space '%1'">;
+
 def err_default_init_const : Error<
   "default initialization of an object of const type %0"
   "%select{| requires a user-provided default constructor}1">;
@@ -3141,11 +3187,6 @@ def err_typecheck_incompatible_address_space : Error<
   " changes address space of pointer">;
 def err_typecheck_convert_ambiguous : Error<
   "ambiguity in initializing value of type %0 with initializer of type %1">;
-def err_cannot_initialize_decl_noname : Error<
-  "cannot initialize a value of type %0 with an %select{rvalue|lvalue}1 "
-  "of type %2">;
-def err_cannot_initialize_decl : Error<
-  "cannot initialize %0 with an %select{rvalue|lvalue}1 of type %2">;
 def err_typecheck_comparison_of_distinct_blocks : Error<
   "comparison of distinct block types (%0 and %1)">;
 
@@ -3616,6 +3657,21 @@ def warn_stringcompare : Warning<
   "result of comparison against %select{a string literal|@encode}0 is "
   "unspecified (use strncmp instead)">;
 
+// Generic selections.
+def err_assoc_type_incomplete : Error<
+  "type %0 in generic association incomplete">;
+def err_assoc_type_nonobject : Error<
+  "type %0 in generic association not an object type">;
+def err_assoc_type_variably_modified : Error<
+  "type %0 in generic association is a variably modified type">;
+def err_assoc_compatible_types : Error<
+  "type %0 in generic association compatible with previously specified type %1">;
+def note_compat_assoc : Note<
+  "compatible type %0 specified here">;
+def err_generic_sel_no_match : Error<
+  "controlling expression type %0 not compatible with any generic association type">;
+def err_generic_sel_multi_match : Error<
+  "controlling expression type %0 compatible with %1 generic association types">;
 
 
 // Blocks
@@ -3792,6 +3848,8 @@ def warn_ivar_use_hidden : Warning<
   "local declaration of %0 hides instance variable">;
 def error_ivar_use_in_class_method : Error<
   "instance variable %0 accessed in class method">;
+def error_implicit_ivar_access : Error<
+  "instance variable %0 cannot be accessed because 'self' has been redeclared">;
 def error_private_ivar_access : Error<"instance variable %0 is private">,
   AccessControl;
 def error_protected_ivar_access : Error<"instance variable %0 is protected">,
@@ -3846,8 +3904,21 @@ def err_sizeof_pack_no_pack_name_suggest : Error<
   "%0 does not refer to the name of a parameter pack; did you mean %1?">;
 def note_parameter_pack_here : Note<"parameter pack %0 declared here">;
 
-def err_bad_use_of_unknown_any : Error<
-  "no known type for %0; must explicitly cast this expression to use it">;
+def err_uncasted_use_of_unknown_any : Error<
+  "%0 has unknown type;  cast it to its declared type to use it">;
+def err_uncasted_call_of_unknown_any : Error<
+  "%0 has unknown return type;  cast the call to its declared return type">;
+def err_unsupported_unknown_any_decl : Error<
+  "%0 has unknown type, which is unsupported for this kind of declaration">;
+def err_unsupported_unknown_any_expr : Error<
+  "unsupported expression with unknown type">;
+def err_unsupported_unknown_any_call : Error<
+  "call to unsupported expression with unknown type">;
+def err_unknown_any_addrof : Error<
+  "the address of a declaration with unknown type "
+  "can only be cast to a pointer type">;
+def err_unknown_any_var_function_type : Error<
+  "variable %0 with unknown type cannot be given a function type">;
 
 } // end of sema category
 

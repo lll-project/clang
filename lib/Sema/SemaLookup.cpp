@@ -1129,8 +1129,8 @@ bool Sema::LookupName(LookupResult &R, Scope *S, bool AllowBuiltinCreation) {
   // If we didn't find a use of this identifier, and if the identifier
   // corresponds to a compiler builtin, create the decl object for the builtin
   // now, injecting it into translation unit scope, and return it.
-  if (AllowBuiltinCreation)
-    return LookupBuiltin(*this, R);
+  if (AllowBuiltinCreation && LookupBuiltin(*this, R))
+    return true;
 
   // If we didn't find a use of this identifier, the ExternalSource 
   // may be able to handle the situation. 
@@ -1963,10 +1963,13 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result, QualType Ty) {
     case Type::Complex:
       break;
 
-    // These are ignored by ADL.
+    // If T is an Objective-C object or interface type, or a pointer to an 
+    // object or interface type, the associated namespace is the global
+    // namespace.
     case Type::ObjCObject:
     case Type::ObjCInterface:
     case Type::ObjCObjectPointer:
+      Result.Namespaces.insert(Result.S.Context.getTranslationUnitDecl());
       break;
     }
 
@@ -2202,7 +2205,8 @@ void ADLResult::insert(NamedDecl *New) {
 
 void Sema::ArgumentDependentLookup(DeclarationName Name, bool Operator,
                                    Expr **Args, unsigned NumArgs,
-                                   ADLResult &Result) {
+                                   ADLResult &Result,
+                                   bool StdNamespaceIsAssociated) {
   // Find all of the associated namespaces and classes based on the
   // arguments we have.
   AssociatedNamespaceSet AssociatedNamespaces;
@@ -2210,6 +2214,8 @@ void Sema::ArgumentDependentLookup(DeclarationName Name, bool Operator,
   FindAssociatedClassesAndNamespaces(Args, NumArgs,
                                      AssociatedNamespaces,
                                      AssociatedClasses);
+  if (StdNamespaceIsAssociated && StdNamespace)
+    AssociatedNamespaces.insert(getStdNamespace());
 
   QualType T1, T2;
   if (Operator) {

@@ -53,6 +53,7 @@ namespace clang {
     void VisitNamespaceAliasDecl(NamespaceAliasDecl *D);
     void VisitTypeDecl(TypeDecl *D);
     void VisitTypedefDecl(TypedefDecl *D);
+    void VisitTypeAliasDecl(TypeAliasDecl *D);
     void VisitUnresolvedUsingTypenameDecl(UnresolvedUsingTypenameDecl *D);
     void VisitTagDecl(TagDecl *D);
     void VisitEnumDecl(EnumDecl *D);
@@ -140,6 +141,7 @@ void ASTDeclWriter::VisitDecl(Decl *D) {
     Writer.WriteAttributes(D->getAttrs(), Record);
   Record.push_back(D->isImplicit());
   Record.push_back(D->isUsed(false));
+  Record.push_back(D->isReferenced());
   Record.push_back(D->getAccess());
   Record.push_back(D->getPCHLevel());
 }
@@ -167,6 +169,12 @@ void ASTDeclWriter::VisitTypedefDecl(TypedefDecl *D) {
   Code = serialization::DECL_TYPEDEF;
 }
 
+void ASTDeclWriter::VisitTypeAliasDecl(TypeAliasDecl *D) {
+  VisitTypeDecl(D);
+  Writer.AddTypeSourceInfo(D->getTypeSourceInfo(), Record);
+  Code = serialization::DECL_TYPEALIAS;
+}
+
 void ASTDeclWriter::VisitTagDecl(TagDecl *D) {
   VisitTypeDecl(D);
   VisitRedeclarable(D);
@@ -179,7 +187,7 @@ void ASTDeclWriter::VisitTagDecl(TagDecl *D) {
   if (D->hasExtInfo())
     Writer.AddQualifierInfo(*D->getExtInfo(), Record);
   else
-    Writer.AddDeclRef(D->getTypedefForAnonDecl(), Record);
+    Writer.AddDeclRef(D->getTypedefNameForAnonDecl(), Record);
 }
 
 void ASTDeclWriter::VisitEnumDecl(EnumDecl *D) {
@@ -553,6 +561,7 @@ void ASTDeclWriter::VisitVarDecl(VarDecl *D) {
   Record.push_back(D->hasCXXDirectInitializer());
   Record.push_back(D->isExceptionVariable());
   Record.push_back(D->isNRVOVariable());
+  Record.push_back(D->isCXXForRangeDecl());
   Record.push_back(D->getInit() ? 1 : 0);
   if (D->getInit())
     Writer.AddStmt(D->getInit());
@@ -1125,6 +1134,7 @@ void ASTWriter::WriteDeclsBlockAbbrevs() {
   Abv->Add(BitCodeAbbrevOp(0));                       // HasAttrs
   Abv->Add(BitCodeAbbrevOp(0));                       // isImplicit
   Abv->Add(BitCodeAbbrevOp(0));                       // isUsed
+  Abv->Add(BitCodeAbbrevOp(0));                       // isReferenced
   Abv->Add(BitCodeAbbrevOp(AS_none));                 // C++ AccessSpecifier
   Abv->Add(BitCodeAbbrevOp(0));                       // PCH level
 
@@ -1145,6 +1155,7 @@ void ASTWriter::WriteDeclsBlockAbbrevs() {
   Abv->Add(BitCodeAbbrevOp(0));                       // hasCXXDirectInitializer
   Abv->Add(BitCodeAbbrevOp(0));                       // isExceptionVariable
   Abv->Add(BitCodeAbbrevOp(0));                       // isNRVOVariable
+  Abv->Add(BitCodeAbbrevOp(0));                       // isCXXForRangeDecl
   Abv->Add(BitCodeAbbrevOp(0));                       // HasInit
   Abv->Add(BitCodeAbbrevOp(0));                   // HasMemberSpecializationInfo
   // ParmVarDecl

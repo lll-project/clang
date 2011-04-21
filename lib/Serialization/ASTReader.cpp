@@ -79,6 +79,7 @@ PCHValidator::ReadLanguageOptions(const LangOptions &LangOpts) {
   PARSE_LANGOPT_BENIGN(Digraphs);
   PARSE_LANGOPT_BENIGN(HexFloats);
   PARSE_LANGOPT_IMPORTANT(C99, diag::warn_pch_c99);
+  PARSE_LANGOPT_IMPORTANT(C1X, diag::warn_pch_c1x);
   PARSE_LANGOPT_IMPORTANT(Microsoft, diag::warn_pch_microsoft_extensions);
   PARSE_LANGOPT_BENIGN(MSCVersion);
   PARSE_LANGOPT_IMPORTANT(CPlusPlus, diag::warn_pch_cplusplus);
@@ -2461,8 +2462,8 @@ ASTReader::ASTReadResult ASTReader::ReadASTCore(llvm::StringRef FileName,
   }
 
   if (!ASTBuffers.empty()) {
-    F.Buffer.reset(ASTBuffers.front());
-    ASTBuffers.pop_front();
+    F.Buffer.reset(ASTBuffers.back());
+    ASTBuffers.pop_back();
     assert(F.Buffer && "Passed null buffer");
   } else {
     // Open the AST file.
@@ -2674,6 +2675,11 @@ void ASTReader::InitializeContext(ASTContext &Ctx) {
   if (SpecialTypes[SPECIAL_TYPE_INT128_INSTALLED])
     Context->setInt128Installed();
 
+  if (unsigned AutoDeduct = SpecialTypes[SPECIAL_TYPE_AUTO_DEDUCT])
+    Context->AutoDeductTy = GetType(AutoDeduct);
+  if (unsigned AutoRRefDeduct = SpecialTypes[SPECIAL_TYPE_AUTO_RREF_DEDUCT])
+    Context->AutoRRefDeductTy = GetType(AutoRRefDeduct);
+
   ReadPragmaDiagnosticMappings(Context->getDiagnostics());
 
   // If there were any CUDA special declarations, deserialize them.
@@ -2792,6 +2798,7 @@ bool ASTReader::ParseLanguageOptions(
     PARSE_LANGOPT(Digraphs);
     PARSE_LANGOPT(HexFloats);
     PARSE_LANGOPT(C99);
+    PARSE_LANGOPT(C1X);
     PARSE_LANGOPT(Microsoft);
     PARSE_LANGOPT(CPlusPlus);
     PARSE_LANGOPT(CPlusPlus0x);
@@ -3006,12 +3013,12 @@ QualType ASTReader::ReadTypeRecord(unsigned Index) {
   }
 
   case TYPE_LVALUE_REFERENCE: {
-    if (Record.size() != 1) {
+    if (Record.size() != 2) {
       Error("Incorrect encoding of lvalue reference type");
       return QualType();
     }
     QualType PointeeType = GetType(Record[0]);
-    return Context->getLValueReferenceType(PointeeType);
+    return Context->getLValueReferenceType(PointeeType, Record[1]);
   }
 
   case TYPE_RVALUE_REFERENCE: {
@@ -3141,7 +3148,7 @@ QualType ASTReader::ReadTypeRecord(unsigned Index) {
       Error("incorrect encoding of typedef type");
       return QualType();
     }
-    TypedefDecl *Decl = cast<TypedefDecl>(GetDecl(Record[0]));
+    TypedefNameDecl *Decl = cast<TypedefNameDecl>(GetDecl(Record[0]));
     QualType Canonical = GetType(Record[1]);
     if (!Canonical.isNull())
       Canonical = Context->getCanonicalType(Canonical);
@@ -4073,7 +4080,7 @@ void ASTReader::InitializeSema(Sema &S) {
   // and add them to Sema's vector of such declarations.
   for (unsigned I = 0, N = ExtVectorDecls.size(); I != N; ++I)
     SemaObj->ExtVectorDecls.push_back(
-                               cast<TypedefDecl>(GetDecl(ExtVectorDecls[I])));
+                             cast<TypedefNameDecl>(GetDecl(ExtVectorDecls[I])));
 
   // FIXME: Do VTable uses and dynamic classes deserialize too much ?
   // Can we cut them down before writing them ?
@@ -4373,8 +4380,8 @@ IdentifierInfo *ASTReader::DecodeIdentifierInfo(unsigned ID) {
   return IdentifiersLoaded[ID];
 }
 
-void ASTReader::ReadSLocEntry(unsigned ID) {
-  ReadSLocEntryRecord(ID);
+bool ASTReader::ReadSLocEntry(unsigned ID) {
+  return ReadSLocEntryRecord(ID) != Success;
 }
 
 Selector ASTReader::DecodeSelector(unsigned ID) {

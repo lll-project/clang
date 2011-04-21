@@ -189,7 +189,7 @@ UnresolvedLookupExpr::Create(ASTContext &C,
                          ExplicitTemplateArgumentList::sizeFor(Args));
   return new (Mem) UnresolvedLookupExpr(C, NamingClass, QualifierLoc, NameInfo,
                                         ADL, /*Overload*/ true, &Args,
-                                        Begin, End);
+                                        Begin, End, /*StdIsAssociated=*/false);
 }
 
 UnresolvedLookupExpr *
@@ -480,6 +480,36 @@ CXXDynamicCastExpr *CXXDynamicCastExpr::CreateEmpty(ASTContext &C,
   void *Buffer =
     C.Allocate(sizeof(CXXDynamicCastExpr) + PathSize * sizeof(CXXBaseSpecifier*));
   return new (Buffer) CXXDynamicCastExpr(EmptyShell(), PathSize);
+}
+
+/// isAlwaysNull - Return whether the result of the dynamic_cast is proven
+/// to always be null. For example:
+///
+/// struct A { };
+/// struct B final : A { };
+/// struct C { };
+///
+/// C *f(B* b) { return dynamic_cast<C*>(b); }
+bool CXXDynamicCastExpr::isAlwaysNull() const
+{
+  QualType SrcType = getSubExpr()->getType();
+  QualType DestType = getType();
+
+  if (const PointerType *SrcPTy = SrcType->getAs<PointerType>()) {
+    SrcType = SrcPTy->getPointeeType();
+    DestType = DestType->castAs<PointerType>()->getPointeeType();
+  }
+
+  const CXXRecordDecl *SrcRD = 
+    cast<CXXRecordDecl>(SrcType->castAs<RecordType>()->getDecl());
+
+  if (!SrcRD->hasAttr<FinalAttr>())
+    return false;
+
+  const CXXRecordDecl *DestRD = 
+    cast<CXXRecordDecl>(DestType->castAs<RecordType>()->getDecl());
+
+  return !DestRD->isDerivedFrom(SrcRD);
 }
 
 CXXReinterpretCastExpr *

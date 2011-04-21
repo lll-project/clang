@@ -65,6 +65,36 @@ void CodeGenTypes::HandleLateResolvedPointers() {
   }
 }
 
+void CodeGenTypes::addRecordTypeName(const RecordDecl *RD, const llvm::Type *Ty,
+                                     llvm::StringRef suffix) {
+  llvm::SmallString<256> TypeName;
+  llvm::raw_svector_ostream OS(TypeName);
+  OS << RD->getKindName() << '.';
+  
+  // Name the codegen type after the typedef name
+  // if there is no tag type name available
+  if (RD->getIdentifier()) {
+    // FIXME: We should not have to check for a null decl context here.
+    // Right now we do it because the implicit Obj-C decls don't have one.
+    if (RD->getDeclContext())
+      OS << RD->getQualifiedNameAsString();
+    else
+      RD->printName(OS);
+  } else if (const TypedefNameDecl *TDD = RD->getTypedefNameForAnonDecl()) {
+    // FIXME: We should not have to check for a null decl context here.
+    // Right now we do it because the implicit Obj-C decls don't have one.
+    if (TDD->getDeclContext())
+      OS << TDD->getQualifiedNameAsString();
+    else
+      TDD->printName(OS);
+  } else
+    OS << "anon";
+
+  if (!suffix.empty())
+    OS << suffix;
+
+  TheModule.addTypeName(OS.str(), Ty);
+}
 
 /// ConvertType - Convert the specified type to its LLVM form.
 const llvm::Type *CodeGenTypes::ConvertType(QualType T, bool IsRecursive) {
@@ -374,30 +404,8 @@ const llvm::Type *CodeGenTypes::ConvertNewType(QualType T) {
     const TagDecl *TD = cast<TagType>(Ty).getDecl();
     const llvm::Type *Res = ConvertTagDeclType(TD);
 
-    llvm::SmallString<256> TypeName;
-    llvm::raw_svector_ostream OS(TypeName);
-    OS << TD->getKindName() << '.';
-
-    // Name the codegen type after the typedef name
-    // if there is no tag type name available
-    if (TD->getIdentifier()) {
-      // FIXME: We should not have to check for a null decl context here.
-      // Right now we do it because the implicit Obj-C decls don't have one.
-      if (TD->getDeclContext())
-        OS << TD->getQualifiedNameAsString();
-      else
-        TD->printName(OS);
-    } else if (const TypedefDecl *TDD = TD->getTypedefForAnonDecl()) {
-      // FIXME: We should not have to check for a null decl context here.
-      // Right now we do it because the implicit Obj-C decls don't have one.
-      if (TDD->getDeclContext())
-        OS << TDD->getQualifiedNameAsString();
-      else
-        TDD->printName(OS);
-    } else
-      OS << "anon";
-
-    TheModule.addTypeName(OS.str(), Res);
+    if (const RecordDecl *RD = dyn_cast<RecordDecl>(TD))
+      addRecordTypeName(RD, Res, llvm::StringRef());
     return Res;
   }
 
@@ -502,6 +510,15 @@ CodeGenTypes::getCGRecordLayout(const RecordDecl *RD) {
 
   assert(Layout && "Unable to find record layout information for type");
   return *Layout;
+}
+
+void CodeGenTypes::addBaseSubobjectTypeName(const CXXRecordDecl *RD,
+                                            const CGRecordLayout &layout) {
+  llvm::StringRef suffix;
+  if (layout.getBaseSubobjectLLVMType() != layout.getLLVMType())
+    suffix = ".base";
+
+  addRecordTypeName(RD, layout.getBaseSubobjectLLVMType(), suffix);
 }
 
 bool CodeGenTypes::isZeroInitializable(QualType T) {

@@ -177,6 +177,10 @@ void StmtProfiler::VisitCXXTryStmt(CXXTryStmt *S) {
   VisitStmt(S);
 }
 
+void StmtProfiler::VisitCXXForRangeStmt(CXXForRangeStmt *S) {
+  VisitStmt(S);
+}
+
 void StmtProfiler::VisitObjCForCollectionStmt(ObjCForCollectionStmt *S) {
   VisitStmt(S);
 }
@@ -428,6 +432,18 @@ void StmtProfiler::VisitBlockDeclRefExpr(BlockDeclRefExpr *S) {
   VisitDecl(S->getDecl());
   ID.AddBoolean(S->isByRef());
   ID.AddBoolean(S->isConstQualAdded());
+}
+
+void StmtProfiler::VisitGenericSelectionExpr(GenericSelectionExpr *S) {
+  VisitExpr(S);
+  for (unsigned i = 0; i != S->getNumAssocs(); ++i) {
+    QualType T = S->getAssocType(i);
+    if (T.isNull())
+      ID.AddPointer(0);
+    else
+      VisitType(T);
+    VisitExpr(S->getAssocExpr(i));
+  }
 }
 
 static Stmt::StmtClass DecodeOperatorCall(CXXOperatorCallExpr *S,

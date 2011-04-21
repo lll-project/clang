@@ -278,3 +278,120 @@ const Rdar9212495_A& rdar9212495(const Rdar9212495_C* ptr) {
   return val;
 }
 
+// Test constructors invalidating arguments.  Previously this raised
+// an uninitialized value warning.
+extern "C" void __attribute__((noreturn)) PR9645_exit(int i);
+
+class PR9645_SideEffect
+{
+public:
+  PR9645_SideEffect(int *pi); // caches pi in i_
+  void Read(int *pi); // copies *pi into *i_
+private:
+  int *i_;
+};
+
+void PR9645() {
+  int i;
+
+  PR9645_SideEffect se(&i);
+  int j = 1;
+  se.Read(&j); // this has a side-effect of initializing i.
+
+  PR9645_exit(i); // no-warning
+}
+
+PR9645_SideEffect::PR9645_SideEffect(int *pi) : i_(pi) {}
+void PR9645_SideEffect::Read(int *pi) { *i_ = *pi; }
+
+// Invalidate fields during C++ method calls.
+class RDar9267815 {
+  int x;
+  void test();
+  void test_pos();
+  void test2();
+  void invalidate();
+};
+
+void RDar9267815::test_pos() {
+  int *p = 0;
+  if (x == 42)
+    return;
+  *p = 0xDEADBEEF; // expected-warning {{null}}
+}
+void RDar9267815::test() {
+  int *p = 0;
+  if (x == 42)
+    return;
+  if (x == 42)
+    *p = 0xDEADBEEF; // no-warning
+}
+
+void RDar9267815::test2() {
+  int *p = 0;
+  if (x == 42)
+    return;
+  invalidate();
+  if (x == 42)
+    *p = 0xDEADBEEF; // expected-warning {{null}}
+}
+
+// Test reference parameters.
+void test_ref_double_aux(double &Value);
+float test_ref_double() {
+  double dVal;
+  test_ref_double_aux(dVal);
+  // This previously warned because 'dVal' was thought to be uninitialized.
+  float Val = (float)dVal; // no-warning
+  return Val;
+}
+
+// Test invalidation of class fields.
+class TestInvalidateClass {
+public:
+  int x;
+};
+
+void test_invalidate_class_aux(TestInvalidateClass &x);
+
+int test_invalidate_class() {
+  TestInvalidateClass y;
+  test_invalidate_class_aux(y);
+  return y.x; // no-warning
+}
+
+// Test correct pointer arithmetic using 'p--'.  This is to warn that we
+// were loading beyond the written characters in buf.
+char *RDar9269695(char *dst, unsigned int n)
+{
+  char buff[40], *p;
+
+  p = buff;
+  do
+    *p++ = '0' + n % 10;
+  while (n /= 10);
+
+  do
+    *dst++ = *--p; // no-warning
+  while (p != buff);
+
+  return dst;
+}
+
+// Test that we invalidate byref arguments passed to constructors.
+class TestInvalidateInCtor {
+public:
+  TestInvalidateInCtor(unsigned &x);
+};
+
+unsigned test_invalidate_in_ctor() {
+  unsigned x;
+  TestInvalidateInCtor foo(x);
+  return x; // no-warning
+}
+unsigned test_invalidate_in_ctor_new() {
+  unsigned x;
+  delete (new TestInvalidateInCtor(x));
+  return x; // no-warning
+}
+

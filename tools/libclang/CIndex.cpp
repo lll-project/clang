@@ -116,7 +116,7 @@ CXSourceRange cxloc::translateSourceRange(const SourceManager &SM,
   // location accordingly.
   SourceLocation EndLoc = R.getEnd();
   if (EndLoc.isValid() && EndLoc.isMacroID())
-    EndLoc = SM.getSpellingLoc(EndLoc);
+    EndLoc = SM.getInstantiationRange(EndLoc).second;
   if (R.isTokenRange() && !EndLoc.isInvalid() && EndLoc.isFileID()) {
     unsigned Length = Lexer::MeasureTokenLength(EndLoc, SM, LangOpts);
     EndLoc = EndLoc.getFileLocWithOffset(Length);
@@ -272,6 +272,7 @@ public:
   bool VisitChildren(CXCursor Parent);
 
   // Declaration visitors
+  bool VisitTypeAliasDecl(TypeAliasDecl *D);
   bool VisitAttributes(Decl *D);
   bool VisitBlockDecl(BlockDecl *B);
   bool VisitCXXRecordDecl(CXXRecordDecl *D);
@@ -494,14 +495,25 @@ bool CursorVisitor::VisitChildren(CXCursor Cursor) {
 
   if (clang_isDeclaration(Cursor.kind)) {
     Decl *D = getCursorDecl(Cursor);
-    assert(D && "Invalid declaration cursor");
+    if (!D)
+      return false;
+
     return VisitAttributes(D) || Visit(D);
   }
 
-  if (clang_isStatement(Cursor.kind))
-    return Visit(getCursorStmt(Cursor));
-  if (clang_isExpression(Cursor.kind))
-    return Visit(getCursorExpr(Cursor));
+  if (clang_isStatement(Cursor.kind)) {
+    if (Stmt *S = getCursorStmt(Cursor))
+      return Visit(S);
+
+    return false;
+  }
+
+  if (clang_isExpression(Cursor.kind)) {
+    if (Expr *E = getCursorExpr(Cursor))
+      return Visit(E);
+
+    return false;
+  }
 
   if (clang_isTranslationUnit(Cursor.kind)) {
     CXTranslationUnit tu = getCursorTU(Cursor);
@@ -628,6 +640,13 @@ bool CursorVisitor::VisitDeclContext(DeclContext *DC) {
 
 bool CursorVisitor::VisitTranslationUnitDecl(TranslationUnitDecl *D) {
   llvm_unreachable("Translation units are visited directly by Visit()");
+  return false;
+}
+
+bool CursorVisitor::VisitTypeAliasDecl(TypeAliasDecl *D) {
+  if (TypeSourceInfo *TSInfo = D->getTypeSourceInfo())
+    return Visit(TSInfo->getTypeLoc());
+
   return false;
 }
 
@@ -1419,7 +1438,7 @@ bool CursorVisitor::VisitBuiltinTypeLoc(BuiltinTypeLoc TL) {
 }
 
 bool CursorVisitor::VisitTypedefTypeLoc(TypedefTypeLoc TL) {
-  return Visit(MakeCursorTypeRef(TL.getTypedefDecl(), TL.getNameLoc(), TU));
+  return Visit(MakeCursorTypeRef(TL.getTypedefNameDecl(), TL.getNameLoc(), TU));
 }
 
 bool CursorVisitor::VisitUnresolvedUsingTypeLoc(UnresolvedUsingTypeLoc TL) {
@@ -2754,8 +2773,9 @@ void clang_getInstantiationLocation(CXSourceLocation location,
   // Check that the FileID is invalid on the instantiation location.
   // This can manifest in invalid code.
   FileID fileID = SM.getFileID(InstLoc);
-  const SrcMgr::SLocEntry &sloc = SM.getSLocEntry(fileID);
-  if (!sloc.isFile()) {
+  bool Invalid = false;
+  const SrcMgr::SLocEntry &sloc = SM.getSLocEntry(fileID, &Invalid);
+  if (!sloc.isFile() || Invalid) {
     createNullLocation(file, line, column, offset);
     return;
   }
@@ -3326,6 +3346,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return createCXString("UsingDirective");
   case CXCursor_UsingDeclaration:
     return createCXString("UsingDeclaration");
+  case CXCursor_TypeAliasDecl:
+      return createCXString("TypeAliasDecl");
   }
 
   llvm_unreachable("Unhandled CXCursorKind");
@@ -3866,6 +3888,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   // declaration and definition.
   case Decl::Namespace:
   case Decl::Typedef:
+  case Decl::TypeAlias:
   case Decl::TemplateTypeParm:
   case Decl::EnumConstant:
   case Decl::Field:
@@ -5155,6 +5178,86 @@ CXType clang_getIBOutletCollectionType(CXCursor C) {
 } // end: extern "C"
 
 //===----------------------------------------------------------------------===//
+// Inspecting memory usage.
+//===----------------------------------------------------------------------===//
+
+typedef std::vector<CXTUResourceUsageEntry> MemUsageEntries;
+
+static inline void createCXTUResourceUsageEntry(MemUsageEntries &entries,
+                                              enum CXTUResourceUsageKind k,
+                                              double amount) {
+  CXTUResourceUsageEntry entry = { k, amount };
+  entries.push_back(entry);
+}
+
+extern "C" {
+
+const char *clang_getTUResourceUsageName(CXTUResourceUsageKind kind) {
+  const char *str = "";
+  switch (kind) {
+    case CXTUResourceUsage_AST:
+      str = "ASTContext: expressions, declarations, and types"; 
+      break;
+    case CXTUResourceUsage_Identifiers:
+      str = "ASTContext: identifiers";
+      break;
+    case CXTUResourceUsage_Selectors:
+      str = "ASTContext: selectors";
+      break;
+    case CXTUResourceUsage_GlobalCompletionResults:
+      str = "Code completion: cached global results";
+      break;
+  }
+  return str;
+}
+
+CXTUResourceUsage clang_getCXTUResourceUsage(CXTranslationUnit TU) {
+  if (!TU) {
+    CXTUResourceUsage usage = { (void*) 0, 0, 0 };
+    return usage;
+  }
+  
+  ASTUnit *astUnit = static_cast<ASTUnit*>(TU->TUData);
+  llvm::OwningPtr<MemUsageEntries> entries(new MemUsageEntries());
+  ASTContext &astContext = astUnit->getASTContext();
+  
+  // How much memory is used by AST nodes and types?
+  createCXTUResourceUsageEntry(*entries, CXTUResourceUsage_AST,
+    (unsigned long) astContext.getTotalAllocatedMemory());
+
+  // How much memory is used by identifiers?
+  createCXTUResourceUsageEntry(*entries, CXTUResourceUsage_Identifiers,
+    (unsigned long) astContext.Idents.getAllocator().getTotalMemory());
+
+  // How much memory is used for selectors?
+  createCXTUResourceUsageEntry(*entries, CXTUResourceUsage_Selectors,
+    (unsigned long) astContext.Selectors.getTotalMemory());
+  
+  // How much memory is used for caching global code completion results?
+  unsigned long completionBytes = 0;
+  if (GlobalCodeCompletionAllocator *completionAllocator =
+      astUnit->getCachedCompletionAllocator().getPtr()) {
+    completionBytes = completionAllocator-> getTotalMemory();
+  }
+  createCXTUResourceUsageEntry(*entries, CXTUResourceUsage_GlobalCompletionResults,
+    completionBytes);
+
+
+  CXTUResourceUsage usage = { (void*) entries.get(),
+                            (unsigned) entries->size(),
+                            entries->size() ? &(*entries)[0] : 0 };
+  entries.take();
+  return usage;
+}
+
+void clang_disposeCXTUResourceUsage(CXTUResourceUsage usage) {
+  if (usage.data)
+    delete (MemUsageEntries*) usage.data;
+}
+
+} // end extern "C"
+
+//===----------------------------------------------------------------------===//
 // Misc. utility functions.
 //===----------------------------------------------------------------------===//
 
@@ -5190,3 +5293,4 @@ CXString clang_getClangVersion() {
 }
 
 } // end: extern "C"
+

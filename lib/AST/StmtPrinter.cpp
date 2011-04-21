@@ -291,6 +291,18 @@ void StmtPrinter::VisitObjCForCollectionStmt(ObjCForCollectionStmt *Node) {
   }
 }
 
+void StmtPrinter::VisitCXXForRangeStmt(CXXForRangeStmt *Node) {
+  Indent() << "for (";
+  PrintingPolicy SubPolicy(Policy);
+  SubPolicy.SuppressInitializers = true;
+  Node->getLoopVariable()->print(OS, SubPolicy, IndentLevel);
+  OS << " : ";
+  PrintExpr(Node->getRangeInit());
+  OS << ") {\n";
+  PrintStmt(Node->getBody());
+  Indent() << "}\n";
+}
+
 void StmtPrinter::VisitGotoStmt(GotoStmt *Node) {
   Indent() << "goto " << Node->getLabel()->getName() << ";\n";
 }
@@ -725,6 +737,23 @@ void StmtPrinter::VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *Node){
     PrintExpr(Node->getArgumentExpr());
   }
 }
+
+void StmtPrinter::VisitGenericSelectionExpr(GenericSelectionExpr *Node) {
+  OS << "_Generic(";
+  PrintExpr(Node->getControllingExpr());
+  for (unsigned i = 0; i != Node->getNumAssocs(); ++i) {
+    OS << ", ";
+    QualType T = Node->getAssocType(i);
+    if (T.isNull())
+      OS << "default";
+    else
+      OS << T.getAsString(Policy);
+    OS << ": ";
+    PrintExpr(Node->getAssocExpr(i));
+  }
+  OS << ")";
+}
+
 void StmtPrinter::VisitArraySubscriptExpr(ArraySubscriptExpr *Node) {
   PrintExpr(Node->getLHS());
   OS << "[";

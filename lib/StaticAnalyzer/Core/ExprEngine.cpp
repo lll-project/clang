@@ -422,8 +422,8 @@ void ExprEngine::Visit(const Stmt* S, ExplodedNode* Pred,
     // C++ stuff we don't support yet.
     case Stmt::CXXBindTemporaryExprClass:
     case Stmt::CXXCatchStmtClass:
-    case Stmt::CXXDefaultArgExprClass:
     case Stmt::CXXDependentScopeMemberExprClass:
+    case Stmt::CXXForRangeStmtClass:
     case Stmt::CXXNullPtrLiteralExprClass:
     case Stmt::CXXPseudoDestructorExprClass:
     case Stmt::CXXTemporaryObjectExprClass:
@@ -448,9 +448,18 @@ void ExprEngine::Visit(const Stmt* S, ExplodedNode* Pred,
       Engine.addAbortedBlock(node, Builder->getBlock());
       break;
     }
-      
+    
+    // We don't handle default arguments either yet, but we can fake it
+    // for now by just skipping them.
+    case Stmt::CXXDefaultArgExprClass: {
+      Dst.Add(Pred);
+      break;
+    }
+
     case Stmt::ParenExprClass:
       llvm_unreachable("ParenExprs already handled.");
+    case Stmt::GenericSelectionExprClass:
+      llvm_unreachable("GenericSelectionExprs already handled.");
     // Cases that should never be evaluated simply because they shouldn't
     // appear in the CFG.
     case Stmt::BreakStmtClass:
@@ -2170,7 +2179,6 @@ void ExprEngine::VisitCast(const CastExpr *CastE, const Expr *Ex,
         continue;
       }
       // Various C++ casts that are not handled yet.
-      case CK_ResolveUnknownAnyType:
       case CK_Dynamic:
       case CK_ToUnion:
       case CK_BaseToDerived:

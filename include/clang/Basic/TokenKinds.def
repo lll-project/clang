@@ -38,6 +38,9 @@
 #ifndef OBJC2_AT_KEYWORD
 #define OBJC2_AT_KEYWORD(X)
 #endif
+#ifndef TESTING_KEYWORD
+#define TESTING_KEYWORD(X, L) KEYWORD(X, L)
+#endif
 #ifndef ANNOTATION
 #define ANNOTATION(X) TOK(annot_ ## X)
 #endif
@@ -187,6 +190,7 @@ PUNCTUATOR(greatergreatergreater, ">>>")
 //              is a keyword in the implementation namespace that should
 //              always be treated as a keyword
 //   KEYC99   - This is a keyword introduced to C in C99
+//   KEYC1X   - This is a keyword introduced to C in C1X
 //   KEYCXX   - This is a C++ keyword, or a C++-specific keyword in the
 //              implementation namespace
 //   KEYNOCXX - This is a keyword in every non-C++ dialect.
@@ -196,6 +200,7 @@ PUNCTUATOR(greatergreatergreater, ">>>")
 //   KEYOPENCL  - This is a keyword in OpenCL
 //   KEYALTIVEC - This is a keyword in AltiVec
 //   KEYBORLAND - This is a keyword if Borland extensions are enabled
+//   BOOLSUPPORT - This is a keyword if 'bool' is a built-in type
 //
 KEYWORD(auto                        , KEYALL)
 KEYWORD(break                       , KEYALL)
@@ -233,7 +238,9 @@ KEYWORD(volatile                    , KEYALL)
 KEYWORD(while                       , KEYALL)
 KEYWORD(_Bool                       , KEYNOCXX)
 KEYWORD(_Complex                    , KEYALL)
+KEYWORD(_Generic                    , KEYALL)
 KEYWORD(_Imaginary                  , KEYALL)
+KEYWORD(_Static_assert              , KEYALL)
 KEYWORD(__func__                    , KEYALL)
 
 // C++ 2.11p1: Keywords.
@@ -415,9 +422,12 @@ ALIAS("_pascal"      , __pascal   , KEYBORLAND)
 ALIAS("__char16_t"   , char16_t   , KEYCXX)
 ALIAS("__char32_t"   , char32_t   , KEYCXX)
 
+// Clang-specific keywords enabled only in testing.
+TESTING_KEYWORD(__unknown_anytype , KEYALL)
+
 
 //===----------------------------------------------------------------------===//
-// Objective-C @-preceeded keywords.
+// Objective-C @-preceded keywords.
 //===----------------------------------------------------------------------===//
 
 // These have meaning after an '@' in Objective-C mode. These define enums in
@@ -466,6 +476,7 @@ ANNOTATION(template_id)  // annotation for a C++ template-id that names a
 ANNOTATION(pragma_unused)
 
 #undef ANNOTATION
+#undef TESTING_KEYWORD
 #undef OBJC2_AT_KEYWORD
 #undef OBJC1_AT_KEYWORD
 #undef CXX_KEYWORD_OPERATOR

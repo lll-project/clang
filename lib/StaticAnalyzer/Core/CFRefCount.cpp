@@ -2431,7 +2431,7 @@ CFRefLeakReport::CFRefLeakReport(CFRefBug& D, const CFRefCount &tf,
                                  SymbolRef sym, ExprEngine& Eng)
 : CFRefReport(D, tf, n, sym) {
 
-  // Most bug reports are cached at the location where they occured.
+  // Most bug reports are cached at the location where they occurred.
   // With leaks, we want to unique them by the location where they were
   // allocated, and only report a single path.  To do this, we need to find
   // the allocation site of a piece of tracked memory, which we do via a
@@ -2527,6 +2527,14 @@ void CFRefCount::evalSummary(ExplodedNodeSet& Dst,
     }
     if (const MemRegion *region = V.getAsRegion())
       RegionsToInvalidate.push_back(region);
+  }
+  
+  // Invalidate all instance variables for the callee of a C++ method call.
+  // FIXME: We should be able to do better with inter-procedural analysis.
+  // FIXME: we can probably do better for const versus non-const methods.
+  if (callOrMsg.isCXXCall()) {
+    if (const MemRegion *callee = callOrMsg.getCXXCallee().getAsRegion())
+      RegionsToInvalidate.push_back(callee);
   }
   
   for (unsigned idx = 0, e = callOrMsg.getNumArgs(); idx != e; ++idx) {
