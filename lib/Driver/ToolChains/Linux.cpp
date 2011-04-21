@@ -41,6 +41,9 @@ enum LinuxDistro {
   DebianLenny,
   DebianSqueeze,
   Exherbo,
+  RHEL6,
+  RHEL5,
+  RHEL4,
   Fedora13,
   Fedora14,
   Fedora15,
@@ -56,7 +59,7 @@ enum LinuxDistro {
   UnknownDistro
 };
 
-static bool IsFedora(enum LinuxDistro Distro) {
+static bool IsRedHat(enum LinuxDistro Distro) {
   return Distro == Fedora13 || Distro == Fedora14 ||
          Distro == Fedora15 || Distro == FedoraRawhide;
 }
@@ -132,6 +135,15 @@ static LinuxDistro DetectLinuxDistro(llvm::Triple::ArchType Arch) {
     else if (Data.startswith("Fedora release") &&
              Data.find("Rawhide") != llvm::StringRef::npos)
       return FedoraRawhide;
+    else if (Data.startswith("Red Hat Enterprise Linux") &&
+             Data.find("release 6") != llvm::StringRef::npos)
+      return RHEL6;
+    else if (Data.startswith("Red Hat Enterprise Linux") &&
+             Data.find("release 5") != llvm::StringRef::npos)
+      return RHEL6;
+    else if (Data.startswith("Red Hat Enterprise Linux") &&
+             Data.find("release 4") != llvm::StringRef::npos)
+      return RHEL6;
     return UnknownDistro;
   }
 
@@ -295,18 +307,18 @@ Linux::Linux(const HostInfo &Host, const llvm::Triple &Triple)
   if (Arch == llvm::Triple::arm || Arch == llvm::Triple::thumb)
     ExtraOpts.push_back("-X");
 
-  if (IsFedora(Distro) || Distro == UbuntuMaverick)
+  if (IsRedHat(Distro) || Distro == UbuntuMaverick)
     ExtraOpts.push_back("--hash-style=gnu");
 
   if (IsDebian(Distro) || Distro == UbuntuLucid || Distro == UbuntuJaunty ||
       Distro == UbuntuKarmic)
     ExtraOpts.push_back("--hash-style=both");
 
-  if (IsFedora(Distro))
+  if (IsRedHat(Distro))
     ExtraOpts.push_back("--no-add-needed");
 
   if (Distro == DebianSqueeze || IsOpenSuse(Distro) ||
-      IsFedora(Distro) || Distro == UbuntuLucid || Distro == UbuntuMaverick ||
+      IsRedHat(Distro) || Distro == UbuntuLucid || Distro == UbuntuMaverick ||
       Distro == UbuntuKarmic)
     ExtraOpts.push_back("--build-id");
 
