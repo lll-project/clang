@@ -611,7 +611,7 @@ def static_libgcc : Flag<"-static-libgcc">;
 def static : Flag<"-static">, Flags<[NoArgumentUnused]>;
 def std_default_EQ : Joined<"-std-default=">;
 def std_EQ : Joined<"-std=">;
-def cxx_stdlib_EQ : Joined<"-cxx-stdlib=">, Flags[DriverOption]>,
+def cxx_stdlib_EQ : Joined<"-cxx-stdlib=">, Flags<[DriverOption]>,
   HelpText<"C++ standard library to use: 'libc++' (LLVM) or 'libstdc++' (GNU)">;
 def stdlib_EQ : Joined<"-stdlib=">, Alias<cxx_stdlib_EQ>;
 def sub__library : JoinedOrSeparate<"-sub_library">;
