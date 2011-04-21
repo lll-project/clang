@@ -140,10 +140,10 @@ static LinuxDistro DetectLinuxDistro(llvm::Triple::ArchType Arch) {
       return RHEL6;
     else if (Data.startswith("Red Hat Enterprise Linux") &&
              Data.find("release 5") != llvm::StringRef::npos)
-      return RHEL6;
+      return RHEL5;
     else if (Data.startswith("Red Hat Enterprise Linux") &&
              Data.find("release 4") != llvm::StringRef::npos)
-      return RHEL6;
+      return RHEL4;
     return UnknownDistro;
   }
 
