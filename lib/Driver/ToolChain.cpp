@@ -210,7 +210,7 @@ void ToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &Args,
     CmdArgs.push_back("-nostdinc++");
     CmdArgs.push_back("-cxx-isystem");
     #if defined(LLVM_INSTALL_PREFIX_STRING)
-      CmdArgs.push_back(LLVM_INSTALL_PREFIX_STRING "/libcxx/v1");
+      CmdArgs.push_back(LLVM_INSTALL_PREFIX_STRING "/include/libcxx/v1");
     #else
       CmdArgs.push_back("/usr/include/libcxx/v1");
     #endif
