@@ -2,6 +2,7 @@
 
 set(known_subdirs
   "compiler-rt"
+  "libcxx"
   )
 
 foreach (dir ${known_subdirs})
@@ -9,3 +10,4 @@ foreach (dir ${known_subdirs})
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/${dir})
   endif()
 endforeach()
+
