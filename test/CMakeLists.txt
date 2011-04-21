@@ -112,7 +112,7 @@ if(PYTHONINTERP_FOUND)
   set_target_properties(clang-c++tests PROPERTIES FOLDER "Clang tests")
 
   if( NOT CLANG_BUILT_STANDALONE )
-     add_custom_target(check-all
+     add_custom_target(clang.check
       COMMAND ${PYTHON_EXECUTABLE}
                 ${LIT}
                 --param build_config=${CMAKE_CFG_INTDIR}
@@ -121,15 +121,15 @@ if(PYTHONINTERP_FOUND)
                 ${LLVM_BINARY_DIR}/test
                 ${CMAKE_CURRENT_BINARY_DIR}
                 COMMENT "Running Clang and LLVM regression tests")
-    add_dependencies(check-all clang-test.deps)
+    add_dependencies(clang.check clang-test.deps)
     if ( LLVM_INCLUDE_TESTS )
-       add_dependencies(check-all check.deps ClangUnitTests)
+       add_dependencies(clang.check check.deps ClangUnitTests)
     endif ( LLVM_INCLUDE_TESTS )
     add_dependencies(clang-test.deps
                     llvm-dis opt
                      FileCheck count not
                      )
-   set_target_properties(check-all PROPERTIES FOLDER "Clang tests")
+   set_target_properties(clang.check PROPERTIES FOLDER "Clang tests")
  endif()
 
   add_dependencies(clang-test clang-test.deps)
@@ -138,3 +138,4 @@ if(PYTHONINTERP_FOUND)
                  )
 
 endif()
+
