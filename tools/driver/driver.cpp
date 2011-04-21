@@ -289,7 +289,10 @@ static void ParseProgName(llvm::SmallVectorImpl<const char *> &ArgVector,
     { "cpp", false, true },
     { "++", true, false },
   };
-  std::string ProgName(llvm::sys::path::stem(ArgVector[0]));
+
+  // if llvm::sys::path::stem is used, the version number gets mangled, e.g.
+  // clang-2.9 becomes clang-2 
+  std::string ProgName(ArgVector[0]);
   llvm::StringRef ProgNameRef(ProgName);
   llvm::StringRef Prefix;
 
