@@ -187,7 +187,7 @@ std::string ToolChain::ComputeEffectiveClangTriple(const ArgList &Args) const {
 }
 
 ToolChain::CXXStdlibType ToolChain::GetCXXStdlibType(const ArgList &Args) const{
-  if (Arg *A = Args.getLastArg(options::OPT_stdlib_EQ)) {
+  if (Arg *A = Args.getLastArg(options::OPT_cxx_stdlib_EQ)) {
     llvm::StringRef Value = A->getValue(Args);
     if (Value == "libc++")
       return ToolChain::CST_Libcxx;
@@ -208,7 +208,12 @@ void ToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &Args,
   case ToolChain::CST_Libcxx:
     CmdArgs.push_back("-nostdinc++");
     CmdArgs.push_back("-cxx-isystem");
-    CmdArgs.push_back("/usr/include/c++/v1");
+    #if defined(LLVM_INSTALL_PREFIX_STRING)
+      CmdArgs.push_back(LLVM_INSTALL_PREFIX_STRING "/libcxx/v1");
+    #else
+      CmdArgs.push_back("/usr/include/c++/v1");
+    #endif
+
     break;
 
   case ToolChain::CST_Libstdcxx:
@@ -223,11 +228,21 @@ void ToolChain::AddCXXStdlibLibArgs(const ArgList &Args,
 
   switch (Type) {
   case ToolChain::CST_Libcxx:
-    CmdArgs.push_back("-lc++");
+    #if defined(LLVM_INSTALL_PREFIX_STRING)
+      CmdArgs.push_back(LLVM_INSTALL_PREFIX_STRING "/lib/libc++.so");
+      CmdArgs.push_back("-Wl,rpath," LLVM_INSTALL_PREFIX_STRING "/lib");
+    #else
+      CmdArgs.push_back("-lc++");
+    #endif
     break;
 
   case ToolChain::CST_Libstdcxx:
-    CmdArgs.push_back("-lstdc++");
+    #if defined(LLVM_INSTALL_PREFIX_STRING)
+      CmdArgs.push_back(LLVM_INSTALL_PREFIX_STRING "/lib/libstdc++.so");
+      CmdArgs.push_back("-Wl,rpath," LLVM_INSTALL_PREFIX_STRING "/lib");
+    #else
+      CmdArgs.push_back("-lstdc++");
+    #endif
     break;
   }
 }
@@ -236,3 +251,4 @@ void ToolChain::AddCCKextLibArgs(const ArgList &Args,
                                  ArgStringList &CmdArgs) const {
   CmdArgs.push_back("-lcc_kext");
 }
+
