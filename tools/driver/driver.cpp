@@ -374,7 +374,7 @@ int main(int argc_, const char **argv_) {
 
   TextDiagnosticPrinter *DiagClient
     = new TextDiagnosticPrinter(llvm::errs(), DiagnosticOptions());
-  DiagClient->setPrefix(llvm::sys::path::stem(Path.str()));
+  DiagClient->setPrefix(Path.str());
   llvm::IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
   Diagnostic Diags(DiagID, DiagClient);
 
