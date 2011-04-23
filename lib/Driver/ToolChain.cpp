@@ -197,8 +197,7 @@ ToolChain::CXXStdlibType ToolChain::GetCXXStdlibType(const ArgList &Args) const{
       << A->getAsString(Args);
   }
 
-  // Use libc++ by default, for great justice
-  return ToolChain::CST_Libcxx;
+  return ToolChain::CST_Libstdcxx;
 }
 
 void ToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &Args,
@@ -232,12 +231,14 @@ void ToolChain::AddCXXStdlibLibArgs(const ArgList &Args,
     #if defined(LLVM_INSTALL_PREFIX_STRING)
       CmdArgs.push_back("-L" LLVM_INSTALL_PREFIX_STRING "/lib");
       CmdArgs.push_back("-l:" LLVM_INSTALL_PREFIX_STRING "/lib/libc++.so");
-      CmdArgs.push_back("-lsupc++");
+      CmdArgs.push_back("-lgcc_s");
+      CmdArgs.push_back("-lgcc_eh");
       CmdArgs.push_back("-lrt");
       CmdArgs.push_back("-lpthread");
       CmdArgs.push_back("-rpath=" LLVM_INSTALL_PREFIX_STRING "/lib");
     #else
-      CmdArgs.push_back("-lsupc++");
+      CmdArgs.push_back("-lgcc_s");
+      CmdArgs.push_back("-lgcc_eh");
       CmdArgs.push_back("-lc++");
       CmdArgs.push_back("-lrt");
       CmdArgs.push_back("-lpthread");
