@@ -39,17 +39,34 @@ else()
   set(CLANGXX_LINK_OR_COPY copy)
 endif()
 
-# Create the clang++ symlink in the build directory.
-set(clang_pp "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang++-${CLANG_VERSION}")
-add_custom_target(clang++-${CLANG_VERSION} ALL
+# Create the clang++-M.M, clang and clang++ symlinks in the build directory.
+add_custom_target(clang++-${CLANG_VERSION}-symlink ALL
   ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY}
     "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang-${CLANG_VERSION}"
-    "${clang_pp}"
+    "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang++-${CLANG_VERSION}"
   DEPENDS clang-${CLANG_VERSION})
-set_target_properties(clang++-${CLANG_VERSION} PROPERTIES FOLDER "Clang executables")
+
+add_custom_target(clang++-symlink ALL
+  ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY}
+    "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang-${CLANG_VERSION}"
+    "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang++"
+  DEPENDS clang-${CLANG_VERSION})
+
+add_custom_target(clang-symlink ALL
+  ${CMAKE_COMMAND} -E ${CLANGXX_LINK_OR_COPY}
+    "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang-${CLANG_VERSION}"
+    "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang"
+  DEPENDS clang-${CLANG_VERSION})
+
+set_target_properties(clang++-${CLANG_VERSION}-symlink PROPERTIES FOLDER "Clang executables")
+set_target_properties(clang++-symlink PROPERTIES FOLDER "Clang executables")
+set_target_properties(clang-symlink PROPERTIES FOLDER "Clang executables")
 
 set_property(DIRECTORY APPEND
-  PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${clang_pp})
+  PROPERTY ADDITIONAL_MAKE_CLEAN_FILES
+  "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang++-${CLANG_VERSION}"
+  "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang++"
+  "${LLVM_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/clang")
 
 install(TARGETS clang-${CLANG_VERSION}
   RUNTIME DESTINATION bin)
