@@ -230,20 +230,22 @@ void ToolChain::AddCXXStdlibLibArgs(const ArgList &Args,
   switch (Type) {
   case ToolChain::CST_Libcxx:
     #if defined(LLVM_INSTALL_PREFIX_STRING)
-      CmdArgs.push_back(LLVM_INSTALL_PREFIX_STRING "/lib/libc++.so");
-      CmdArgs.push_back("-Wl,rpath," LLVM_INSTALL_PREFIX_STRING "/lib");
+      CmdArgs.push_back("-L" LLVM_INSTALL_PREFIX_STRING "/lib");
+      CmdArgs.push_back("-l:" LLVM_INSTALL_PREFIX_STRING "/lib/libc++.so");
+      CmdArgs.push_back("-lsupc++");
+      CmdArgs.push_back("-lrt");
+      CmdArgs.push_back("-lpthread");
+      CmdArgs.push_back("-rpath=" LLVM_INSTALL_PREFIX_STRING "/lib");
     #else
+      CmdArgs.push_back("-lsupc++");
       CmdArgs.push_back("-lc++");
+      CmdArgs.push_back("-lrt");
+      CmdArgs.push_back("-lpthread");
     #endif
     break;
 
   case ToolChain::CST_Libstdcxx:
-    #if defined(LLVM_INSTALL_PREFIX_STRING)
-      CmdArgs.push_back(LLVM_INSTALL_PREFIX_STRING "/lib/libstdc++.so");
-      CmdArgs.push_back("-Wl,rpath," LLVM_INSTALL_PREFIX_STRING "/lib");
-    #else
-      CmdArgs.push_back("-lstdc++");
-    #endif
+    CmdArgs.push_back("-lstdc++");
     break;
   }
 }
