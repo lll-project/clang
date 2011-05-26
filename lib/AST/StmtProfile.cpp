@@ -181,6 +181,18 @@ void StmtProfiler::VisitCXXForRangeStmt(CXXForRangeStmt *S) {
   VisitStmt(S);
 }
 
+void StmtProfiler::VisitSEHTryStmt(SEHTryStmt *S) {
+  VisitStmt(S);
+}
+
+void StmtProfiler::VisitSEHFinallyStmt(SEHFinallyStmt *S) {
+  VisitStmt(S);
+}
+
+void StmtProfiler::VisitSEHExceptStmt(SEHExceptStmt *S) {
+  VisitStmt(S);
+}
+
 void StmtProfiler::VisitObjCForCollectionStmt(ObjCForCollectionStmt *S) {
   VisitStmt(S);
 }
@@ -802,6 +814,18 @@ void StmtProfiler::VisitBinaryTypeTraitExpr(BinaryTypeTraitExpr *S) {
   VisitType(S->getRhsType());
 }
 
+void StmtProfiler::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *S) {
+  VisitExpr(S);
+  ID.AddInteger(S->getTrait());
+  VisitType(S->getQueriedType());
+}
+
+void StmtProfiler::VisitExpressionTraitExpr(ExpressionTraitExpr *S) {
+  VisitExpr(S);
+  ID.AddInteger(S->getTrait());
+  VisitExpr(S->getQueriedExpression());
+}
+
 void
 StmtProfiler::VisitDependentScopeDeclRefExpr(DependentScopeDeclRefExpr *S) {
   VisitExpr(S);
@@ -937,12 +961,16 @@ void StmtProfiler::VisitDecl(Decl *D) {
     }
 
     if (ParmVarDecl *Parm = dyn_cast<ParmVarDecl>(D)) {
-      // The Itanium C++ ABI uses the type of a parameter when mangling
-      // expressions that involve function parameters, so we will use the
-      // parameter's type for establishing function parameter identity. That
-      // way, our definition of "equivalent" (per C++ [temp.over.link])
-      // matches the definition of "equivalent" used for name mangling.
+      // The Itanium C++ ABI uses the type, scope depth, and scope
+      // index of a parameter when mangling expressions that involve
+      // function parameters, so we will use the parameter's type for
+      // establishing function parameter identity. That way, our
+      // definition of "equivalent" (per C++ [temp.over.link]) is at
+      // least as strong as the definition of "equivalent" used for
+      // name mangling.
       VisitType(Parm->getType());
+      ID.AddInteger(Parm->getFunctionScopeDepth());
+      ID.AddInteger(Parm->getFunctionScopeIndex());
       return;
     }
 

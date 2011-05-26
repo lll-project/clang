@@ -129,6 +129,12 @@ void Sema::AddAlignmentAttributesForRecord(RecordDecl *RD) {
   }
 }
 
+void Sema::AddMsStructLayoutForRecord(RecordDecl *RD) {
+  if (!MSStructPragmaOn)
+    return;
+  RD->addAttr(::new (Context) MsStructAttr(SourceLocation(), Context));
+}
+
 void Sema::ActOnPragmaOptionsAlign(PragmaOptionsAlignKind Kind,
                                    SourceLocation PragmaLoc,
                                    SourceLocation KindLoc) {
@@ -261,6 +267,10 @@ void Sema::ActOnPragmaPack(PragmaPackKind Kind, IdentifierInfo *Name,
   default:
     assert(0 && "Invalid #pragma pack kind.");
   }
+}
+
+void Sema::ActOnPragmaMSStruct(PragmaMSStructKind Kind) { 
+  MSStructPragmaOn = (Kind == PMSST_ON);
 }
 
 void Sema::ActOnPragmaUnused(const Token &IdTok, Scope *curScope,

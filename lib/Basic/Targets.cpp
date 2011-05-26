@@ -121,7 +121,6 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
       if (Triple.getEnvironmentName() == "iphoneos") {
         PlatformName = "ios";
       } else {
-        assert(Rev == 0 && "invalid triple, unexpected micro version!");
         PlatformName = "macosx";
         Rev = Min;
         Min = Maj - 4;
@@ -135,7 +134,7 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
 
   // Set the appropriate OS version define.
   if (PlatformName == "ios") {
-    assert(Maj < 10 && Min < 99 && Rev < 99 && "Invalid version!");
+    assert(Maj < 10 && Min < 100 && Rev < 100 && "Invalid version!");
     char Str[6];
     Str[0] = '0' + Maj;
     Str[1] = '0' + (Min / 10);
@@ -145,13 +144,17 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
     Str[5] = '\0';
     Builder.defineMacro("__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__", Str);
   } else {
+    // Note that the Driver allows versions which aren't representable in the
+    // define (because we only get a single digit for the minor and micro
+    // revision numbers). So, we limit them to the maximum representable
+    // version.
     assert(Triple.getEnvironmentName().empty() && "Invalid environment!");
-    assert(Maj < 99 && Min < 10 && Rev < 10 && "Invalid version!");
+    assert(Maj < 100 && Min < 100 && Rev < 100 && "Invalid version!");
     char Str[5];
     Str[0] = '0' + (Maj / 10);
     Str[1] = '0' + (Maj % 10);
-    Str[2] = '0' + Min;
-    Str[3] = '0' + Rev;
+    Str[2] = '0' + std::min(Min, 9U);
+    Str[3] = '0' + std::min(Rev, 9U);
     Str[4] = '\0';
     Builder.defineMacro("__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__", Str);
   }
@@ -1177,7 +1180,7 @@ void X86TargetInfo::getDefaultFeatures(const std::string &CPU,
   else if (CPU == "corei7") {
     setFeatureEnabled(Features, "sse4", true);
     setFeatureEnabled(Features, "aes", true);
-  } else if (CPU == "sandybridge") {
+  } else if (CPU == "corei7-avx") {
     setFeatureEnabled(Features, "sse4", true);
     setFeatureEnabled(Features, "aes", true);
 //    setFeatureEnabled(Features, "avx", true);
@@ -1990,11 +1993,11 @@ public:
     if (CPU == "xscale")
       Builder.defineMacro("__XSCALE__");
 
-    bool IsThumb2 = IsThumb && (CPUArch == "6T2" || CPUArch.startswith("7"));
+    bool IsARMv7 = CPUArch.startswith("7");
     if (IsThumb) {
       Builder.defineMacro("__THUMBEL__");
       Builder.defineMacro("__thumb__");
-      if (IsThumb2)
+      if (CPUArch == "6T2" || IsARMv7)
         Builder.defineMacro("__thumb2__");
     }
 
@@ -2008,7 +2011,7 @@ public:
     // the VFP define, hence the soft float and arch check. This is subtly
     // different from gcc, we follow the intent which was that it should be set
     // when Neon instructions are actually available.
-    if (FPU == NeonFPU && !SoftFloat && IsThumb2)
+    if (FPU == NeonFPU && !SoftFloat && IsARMv7)
       Builder.defineMacro("__ARM_NEON__");
   }
   virtual void getTargetBuiltins(const Builtin::Info *&Records,
@@ -2017,7 +2020,7 @@ public:
     NumRecords = clang::ARM::LastTSBuiltin-Builtin::FirstTSBuiltin;
   }
   virtual const char *getVAListDeclaration() const {
-    return "typedef char* __builtin_va_list;";
+    return "typedef void* __builtin_va_list;";
   }
   virtual void getGCCRegNames(const char * const *&Names,
                               unsigned &NumNames) const;

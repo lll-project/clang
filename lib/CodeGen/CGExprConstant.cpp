@@ -344,16 +344,30 @@ bool ConstStructBuilder::Build(InitListExpr *ILE) {
 
   unsigned FieldNo = 0;
   unsigned ElementNo = 0;
+  const FieldDecl *LastFD = 0;
+  bool IsMsStruct = RD->hasAttr<MsStructAttr>();
+  
   for (RecordDecl::field_iterator Field = RD->field_begin(),
        FieldEnd = RD->field_end(); Field != FieldEnd; ++Field, ++FieldNo) {
+    if (IsMsStruct) {
+      // Zero-length bitfields following non-bitfield members are
+      // ignored:
+      if (CGM.getContext().ZeroBitfieldFollowsNonBitfield((*Field), LastFD)) {
+        --FieldNo;
+        continue;
+      }
+      LastFD = (*Field);
+    }
     
     // If this is a union, skip all the fields that aren't being initialized.
     if (RD->isUnion() && ILE->getInitializedFieldInUnion() != *Field)
       continue;
 
     // Don't emit anonymous bitfields, they just affect layout.
-    if (Field->isBitField() && !Field->getIdentifier())
+    if (Field->isBitField() && !Field->getIdentifier()) {
+      LastFD = (*Field);
       continue;
+    }
 
     // Get the initializer.  A struct can include fields without initializers,
     // we just use explicit null values for them.
@@ -596,12 +610,12 @@ public:
       return llvm::ConstantPointerNull::get(cast<llvm::PointerType>(destType));
 
     case CK_IntegralCast: {
-      bool isSigned = subExpr->getType()->isSignedIntegerType();
+      bool isSigned = subExpr->getType()->isSignedIntegerOrEnumerationType();
       return llvm::ConstantExpr::getIntegerCast(C, destType, isSigned);
     }
 
     case CK_IntegralToPointer: {
-      bool isSigned = subExpr->getType()->isSignedIntegerType();
+      bool isSigned = subExpr->getType()->isSignedIntegerOrEnumerationType();
       C = llvm::ConstantExpr::getIntegerCast(C, CGM.IntPtrTy, isSigned);
       return llvm::ConstantExpr::getIntToPtr(C, destType);
     }
@@ -611,13 +625,13 @@ public:
                              llvm::Constant::getNullValue(C->getType()));
 
     case CK_IntegralToFloating:
-      if (subExpr->getType()->isSignedIntegerType())
+      if (subExpr->getType()->isSignedIntegerOrEnumerationType())
         return llvm::ConstantExpr::getSIToFP(C, destType);
       else
         return llvm::ConstantExpr::getUIToFP(C, destType);
 
     case CK_FloatingToIntegral:
-      if (E->getType()->isSignedIntegerType())
+      if (E->getType()->isSignedIntegerOrEnumerationType())
         return llvm::ConstantExpr::getFPToSI(C, destType);
       else
         return llvm::ConstantExpr::getFPToUI(C, destType);

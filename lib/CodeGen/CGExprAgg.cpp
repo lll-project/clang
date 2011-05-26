@@ -182,11 +182,9 @@ bool AggExprEmitter::TypeRequiresGCollection(QualType T) {
 /// move will be performed.
 void AggExprEmitter::EmitGCMove(const Expr *E, RValue Src) {
   if (Dest.requiresGCollection()) {
-    std::pair<uint64_t, unsigned> TypeInfo = 
-      CGF.getContext().getTypeInfo(E->getType());
-    unsigned long size = TypeInfo.first/8;
+    CharUnits size = CGF.getContext().getTypeSizeInChars(E->getType());
     const llvm::Type *SizeTy = CGF.ConvertType(CGF.getContext().getSizeType());
-    llvm::Value *SizeVal = llvm::ConstantInt::get(SizeTy, size);
+    llvm::Value *SizeVal = llvm::ConstantInt::get(SizeTy, size.getQuantity());
     CGF.CGM.getObjCRuntime().EmitGCMemmoveCollectable(CGF, Dest.getAddr(),
                                                     Src.getAggregateAddr(),
                                                     SizeVal);
@@ -215,11 +213,9 @@ void AggExprEmitter::EmitFinalDestCopy(const Expr *E, RValue Src, bool Ignore) {
   }
 
   if (Dest.requiresGCollection()) {
-    std::pair<uint64_t, unsigned> TypeInfo = 
-    CGF.getContext().getTypeInfo(E->getType());
-    unsigned long size = TypeInfo.first/8;
+    CharUnits size = CGF.getContext().getTypeSizeInChars(E->getType());
     const llvm::Type *SizeTy = CGF.ConvertType(CGF.getContext().getSizeType());
-    llvm::Value *SizeVal = llvm::ConstantInt::get(SizeTy, size);
+    llvm::Value *SizeVal = llvm::ConstantInt::get(SizeTy, size.getQuantity());
     CGF.CGM.getObjCRuntime().EmitGCMemmoveCollectable(CGF,
                                                       Dest.getAddr(),
                                                       Src.getAggregateAddr(),
@@ -397,7 +393,22 @@ void AggExprEmitter::VisitBinAssign(const BinaryOperator *E) {
                                                  E->getRHS()->getType())
          && "Invalid assignment");
 
-  // FIXME:  __block variables need the RHS evaluated first!
+  if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(E->getLHS()))
+    if (const VarDecl *VD = dyn_cast<VarDecl>(DRE->getDecl()))
+      if (VD->hasAttr<BlocksAttr>() &&
+          E->getRHS()->HasSideEffects(CGF.getContext())) {
+        // When __block variable on LHS, the RHS must be evaluated first 
+        // as it may change the 'forwarding' field via call to Block_copy.
+        LValue RHS = CGF.EmitLValue(E->getRHS());
+        LValue LHS = CGF.EmitLValue(E->getLHS());
+        bool GCollection = false;
+        if (CGF.getContext().getLangOptions().getGCMode())
+          GCollection = TypeRequiresGCollection(E->getLHS()->getType());
+        Dest = AggValueSlot::forLValue(LHS, true, GCollection);
+        EmitFinalDestCopy(E, RHS, true);
+        return;
+      }
+  
   LValue LHS = CGF.EmitLValue(E->getLHS());
 
   // We have to special case property setters, otherwise we must have
@@ -626,6 +637,14 @@ void AggExprEmitter::VisitInitListExpr(InitListExpr *E) {
     QualType ElementType = CGF.getContext().getCanonicalType(E->getType());
     ElementType = CGF.getContext().getAsArrayType(ElementType)->getElementType();
 
+    bool hasNonTrivialCXXConstructor = false;
+    if (CGF.getContext().getLangOptions().CPlusPlus)
+      if (const RecordType *RT = CGF.getContext()
+                        .getBaseElementType(ElementType)->getAs<RecordType>()) {
+        const CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
+        hasNonTrivialCXXConstructor = !RD->hasTrivialDefaultConstructor();
+      }
+
     // FIXME: were we intentionally ignoring address spaces and GC attributes?
 
     for (uint64_t i = 0; i != NumArrayElements; ++i) {
@@ -633,7 +652,8 @@ void AggExprEmitter::VisitInitListExpr(InitListExpr *E) {
       // then we're done.
       if (i == NumInitElements &&
           Dest.isZeroed() &&
-          CGF.getTypes().isZeroInitializable(ElementType))
+          CGF.getTypes().isZeroInitializable(ElementType) &&
+          !hasNonTrivialCXXConstructor)
         break;
 
       llvm::Value *NextVal = Builder.CreateStructGEP(DestPtr, i, ".array");
@@ -746,17 +766,17 @@ void AggExprEmitter::VisitInitListExpr(InitListExpr *E) {
 /// GetNumNonZeroBytesInInit - Get an approximate count of the number of
 /// non-zero bytes that will be stored when outputting the initializer for the
 /// specified initializer expression.
-static uint64_t GetNumNonZeroBytesInInit(const Expr *E, CodeGenFunction &CGF) {
+static CharUnits GetNumNonZeroBytesInInit(const Expr *E, CodeGenFunction &CGF) {
   E = E->IgnoreParens();
 
   // 0 and 0.0 won't require any non-zero stores!
-  if (isSimpleZero(E, CGF)) return 0;
+  if (isSimpleZero(E, CGF)) return CharUnits::Zero();
 
   // If this is an initlist expr, sum up the size of sizes of the (present)
   // elements.  If this is something weird, assume the whole thing is non-zero.
   const InitListExpr *ILE = dyn_cast<InitListExpr>(E);
   if (ILE == 0 || !CGF.getTypes().isZeroInitializable(ILE->getType()))
-    return CGF.getContext().getTypeSize(E->getType())/8;
+    return CGF.getContext().getTypeSizeInChars(E->getType());
   
   // InitListExprs for structs have to be handled carefully.  If there are
   // reference members, we need to consider the size of the reference, not the
@@ -764,7 +784,7 @@ static uint64_t GetNumNonZeroBytesInInit(const Expr *E, CodeGenFunction &CGF) {
   if (const RecordType *RT = E->getType()->getAs<RecordType>()) {
     if (!RT->isUnionType()) {
       RecordDecl *SD = E->getType()->getAs<RecordType>()->getDecl();
-      uint64_t NumNonZeroBytes = 0;
+      CharUnits NumNonZeroBytes = CharUnits::Zero();
       
       unsigned ILEElement = 0;
       for (RecordDecl::field_iterator Field = SD->field_begin(),
@@ -781,7 +801,8 @@ static uint64_t GetNumNonZeroBytesInInit(const Expr *E, CodeGenFunction &CGF) {
         
         // Reference values are always non-null and have the width of a pointer.
         if (Field->getType()->isReferenceType())
-          NumNonZeroBytes += CGF.getContext().Target.getPointerWidth(0);
+          NumNonZeroBytes += CGF.getContext().toCharUnitsFromBits(
+              CGF.getContext().Target.getPointerWidth(0));
         else
           NumNonZeroBytes += GetNumNonZeroBytesInInit(E, CGF);
       }
@@ -791,7 +812,7 @@ static uint64_t GetNumNonZeroBytesInInit(const Expr *E, CodeGenFunction &CGF) {
   }
   
   
-  uint64_t NumNonZeroBytes = 0;
+  CharUnits NumNonZeroBytes = CharUnits::Zero();
   for (unsigned i = 0, e = ILE->getNumInits(); i != e; ++i)
     NumNonZeroBytes += GetNumNonZeroBytesInInit(ILE->getInit(i), CGF);
   return NumNonZeroBytes;
@@ -805,28 +826,38 @@ static void CheckAggExprForMemSetUse(AggValueSlot &Slot, const Expr *E,
   // If the slot is already known to be zeroed, nothing to do.  Don't mess with
   // volatile stores.
   if (Slot.isZeroed() || Slot.isVolatile() || Slot.getAddr() == 0) return;
-  
+
+  // C++ objects with a user-declared constructor don't need zero'ing.
+  if (CGF.getContext().getLangOptions().CPlusPlus)
+    if (const RecordType *RT = CGF.getContext()
+                       .getBaseElementType(E->getType())->getAs<RecordType>()) {
+      const CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
+      if (RD->hasUserDeclaredConstructor())
+        return;
+    }
+
   // If the type is 16-bytes or smaller, prefer individual stores over memset.
-  std::pair<uint64_t, unsigned> TypeInfo =
-    CGF.getContext().getTypeInfo(E->getType());
-  if (TypeInfo.first/8 <= 16)
+  std::pair<CharUnits, CharUnits> TypeInfo =
+    CGF.getContext().getTypeInfoInChars(E->getType());
+  if (TypeInfo.first <= CharUnits::fromQuantity(16))
     return;
 
   // Check to see if over 3/4 of the initializer are known to be zero.  If so,
   // we prefer to emit memset + individual stores for the rest.
-  uint64_t NumNonZeroBytes = GetNumNonZeroBytesInInit(E, CGF);
-  if (NumNonZeroBytes*4 > TypeInfo.first/8)
+  CharUnits NumNonZeroBytes = GetNumNonZeroBytesInInit(E, CGF);
+  if (NumNonZeroBytes*4 > TypeInfo.first)
     return;
   
   // Okay, it seems like a good idea to use an initial memset, emit the call.
-  llvm::Constant *SizeVal = CGF.Builder.getInt64(TypeInfo.first/8);
-  unsigned Align = TypeInfo.second/8;
+  llvm::Constant *SizeVal = CGF.Builder.getInt64(TypeInfo.first.getQuantity());
+  CharUnits Align = TypeInfo.second;
 
   llvm::Value *Loc = Slot.getAddr();
   const llvm::Type *BP = llvm::Type::getInt8PtrTy(CGF.getLLVMContext());
   
   Loc = CGF.Builder.CreateBitCast(Loc, BP);
-  CGF.Builder.CreateMemSet(Loc, CGF.Builder.getInt8(0), SizeVal, Align, false);
+  CGF.Builder.CreateMemSet(Loc, CGF.Builder.getInt8(0), SizeVal, 
+                           Align.getQuantity(), false);
   
   // Tell the AggExprEmitter that the slot is known zero.
   Slot.setZeroed();
@@ -895,7 +926,8 @@ void CodeGenFunction::EmitAggregateCopy(llvm::Value *DestPtr,
   // safely handle this, we can add a target hook.
 
   // Get size and alignment info for this aggregate.
-  std::pair<uint64_t, unsigned> TypeInfo = getContext().getTypeInfo(Ty);
+  std::pair<CharUnits, CharUnits> TypeInfo = 
+    getContext().getTypeInfoInChars(Ty);
 
   // FIXME: Handle variable sized types.
 
@@ -925,9 +957,9 @@ void CodeGenFunction::EmitAggregateCopy(llvm::Value *DestPtr,
   if (const RecordType *RecordTy = Ty->getAs<RecordType>()) {
     RecordDecl *Record = RecordTy->getDecl();
     if (Record->hasObjectMember()) {
-      unsigned long size = TypeInfo.first/8;
+      CharUnits size = TypeInfo.first;
       const llvm::Type *SizeTy = ConvertType(getContext().getSizeType());
-      llvm::Value *SizeVal = llvm::ConstantInt::get(SizeTy, size);
+      llvm::Value *SizeVal = llvm::ConstantInt::get(SizeTy, size.getQuantity());
       CGM.getObjCRuntime().EmitGCMemmoveCollectable(*this, DestPtr, SrcPtr, 
                                                     SizeVal);
       return;
@@ -936,9 +968,10 @@ void CodeGenFunction::EmitAggregateCopy(llvm::Value *DestPtr,
     QualType BaseType = getContext().getBaseElementType(Ty);
     if (const RecordType *RecordTy = BaseType->getAs<RecordType>()) {
       if (RecordTy->getDecl()->hasObjectMember()) {
-        unsigned long size = TypeInfo.first/8;
+        CharUnits size = TypeInfo.first;
         const llvm::Type *SizeTy = ConvertType(getContext().getSizeType());
-        llvm::Value *SizeVal = llvm::ConstantInt::get(SizeTy, size);
+        llvm::Value *SizeVal = 
+          llvm::ConstantInt::get(SizeTy, size.getQuantity());
         CGM.getObjCRuntime().EmitGCMemmoveCollectable(*this, DestPtr, SrcPtr, 
                                                       SizeVal);
         return;
@@ -947,6 +980,7 @@ void CodeGenFunction::EmitAggregateCopy(llvm::Value *DestPtr,
   }
   
   Builder.CreateMemCpy(DestPtr, SrcPtr,
-                       llvm::ConstantInt::get(IntPtrTy, TypeInfo.first/8),
-                       TypeInfo.second/8, isVolatile);
+                       llvm::ConstantInt::get(IntPtrTy, 
+                                              TypeInfo.first.getQuantity()),
+                       TypeInfo.second.getQuantity(), isVolatile);
 }

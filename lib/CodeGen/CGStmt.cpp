@@ -72,6 +72,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   switch (S->getStmtClass()) {
   case Stmt::NoStmtClass:
   case Stmt::CXXCatchStmtClass:
+  case Stmt::SEHExceptStmtClass:
+  case Stmt::SEHFinallyStmtClass:
     llvm_unreachable("invalid statement class to emit generically");
   case Stmt::NullStmtClass:
   case Stmt::CompoundStmtClass:
@@ -155,6 +157,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     break;
   case Stmt::CXXForRangeStmtClass:
     EmitCXXForRangeStmt(cast<CXXForRangeStmt>(*S));
+  case Stmt::SEHTryStmtClass:
+    // FIXME Not yet implemented
     break;
   }
 }
@@ -995,7 +999,7 @@ static CSFC_Result CollectStatementsForCase(const Stmt *S,
       // If we're looking for the case, just see if we can skip each of the
       // substatements.
       for (; Case && I != E; ++I) {
-        HadSkippedDecl |= isa<DeclStmt>(I);
+        HadSkippedDecl |= isa<DeclStmt>(*I);
         
         switch (CollectStatementsForCase(*I, Case, FoundCase, ResultStmts)) {
         case CSFC_Failure: return CSFC_Failure;
@@ -1351,7 +1355,7 @@ static llvm::MDNode *getAsmSrcLocInfo(const StringLiteral *Str,
     }
   }    
   
-  return llvm::MDNode::get(CGF.getLLVMContext(), Locs.data(), Locs.size());
+  return llvm::MDNode::get(CGF.getLLVMContext(), Locs);
 }
 
 void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {

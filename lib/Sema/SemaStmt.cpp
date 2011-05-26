@@ -46,8 +46,9 @@ StmtResult Sema::ActOnExprStmt(FullExprArg expr) {
 }
 
 
-StmtResult Sema::ActOnNullStmt(SourceLocation SemiLoc, bool LeadingEmptyMacro) {
-  return Owned(new (Context) NullStmt(SemiLoc, LeadingEmptyMacro));
+StmtResult Sema::ActOnNullStmt(SourceLocation SemiLoc,
+                               SourceLocation LeadingEmptyMacroLoc) {
+  return Owned(new (Context) NullStmt(SemiLoc, LeadingEmptyMacroLoc));
 }
 
 StmtResult Sema::ActOnDeclStmt(DeclGroupPtrTy dg, SourceLocation StartLoc,
@@ -76,12 +77,6 @@ void Sema::DiagnoseUnusedExprResult(const Stmt *S) {
   const Expr *E = dyn_cast_or_null<Expr>(S);
   if (!E)
     return;
-
-  if (E->isBoundMemberFunction(Context)) {
-    Diag(E->getLocStart(), diag::err_invalid_use_of_bound_member_func)
-      << E->getSourceRange();
-    return;
-  }
 
   SourceLocation Loc;
   SourceRange R1, R2;
@@ -506,7 +501,8 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
     = CondExpr->isTypeDependent() || CondExpr->isValueDependent();
   unsigned CondWidth
     = HasDependentValue ? 0 : Context.getIntWidth(CondTypeBeforePromotion);
-  bool CondIsSigned = CondTypeBeforePromotion->isSignedIntegerType();
+  bool CondIsSigned 
+    = CondTypeBeforePromotion->isSignedIntegerOrEnumerationType();
 
   // Accumulate all of the case values in a vector so that we can sort them
   // and detect duplicates.  This vector contains the APInt for the case after
@@ -1257,7 +1253,8 @@ Sema::BuildCXXForRangeStmt(SourceLocation ForLoc, SourceLocation ColonLoc,
       ExprResult BoundExpr;
       if (const ConstantArrayType *CAT = dyn_cast<ConstantArrayType>(UnqAT))
         BoundExpr = Owned(IntegerLiteral::Create(Context, CAT->getSize(),
-                                                 Context.IntTy, RangeLoc));
+                                                 Context.getPointerDiffType(),
+                                                 RangeLoc));
       else if (const VariableArrayType *VAT =
                dyn_cast<VariableArrayType>(UnqAT))
         BoundExpr = VAT->getSizeExpr();
@@ -1460,7 +1457,10 @@ Sema::ActOnBreakStmt(SourceLocation BreakLoc, Scope *CurScope) {
 /// \param E The expression being returned from the function or block, or
 /// being thrown.
 ///
-/// \param AllowFunctionParameter
+/// \param AllowFunctionParameter Whether we allow function parameters to
+/// be considered NRVO candidates. C++ prohibits this for NRVO itself, but
+/// we re-use this logic to determine whether we should try to move as part of
+/// a return or throw (which does allow function parameters).
 ///
 /// \returns The NRVO candidate variable, if the return statement may use the
 /// NRVO, or NULL if there is no such candidate.
@@ -1666,6 +1666,10 @@ Sema::ActOnBlockReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
 
 StmtResult
 Sema::ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
+  // Check for unexpanded parameter packs.
+  if (RetValExp && DiagnoseUnexpandedParameterPack(RetValExp))
+    return StmtError();
+  
   if (getCurBlock())
     return ActOnBlockReturnStmt(ReturnLoc, RetValExp);
 
@@ -2013,7 +2017,9 @@ StmtResult Sema::ActOnAsmStmt(SourceLocation AsmLoc, bool IsSimple,
     if (InputDomain == AD_Int && OutputDomain == AD_Int &&
         !isOperandMentioned(InputOpNo, Pieces) &&
         InputExpr->isEvaluatable(Context)) {
-      InputExpr = ImpCastExprToType(InputExpr, OutTy, CK_IntegralCast).take();
+      CastKind castKind =
+        (OutTy->isBooleanType() ? CK_IntegralToBoolean : CK_IntegralCast);
+      InputExpr = ImpCastExprToType(InputExpr, OutTy, castKind).take();
       Exprs[InputOpNo] = InputExpr;
       NS->setInputExpr(i, InputExpr);
       continue;
@@ -2229,3 +2235,36 @@ Sema::ActOnCXXTryBlock(SourceLocation TryLoc, Stmt *TryBlock,
   return Owned(CXXTryStmt::Create(Context, TryLoc, TryBlock,
                                   Handlers, NumHandlers));
 }
+
+StmtResult
+Sema::ActOnSEHTryBlock(bool IsCXXTry,
+                       SourceLocation TryLoc,
+                       Stmt *TryBlock,
+                       Stmt *Handler) {
+  assert(TryBlock && Handler);
+
+  getCurFunction()->setHasBranchProtectedScope();
+
+  return Owned(SEHTryStmt::Create(Context,IsCXXTry,TryLoc,TryBlock,Handler));
+}
+
+StmtResult
+Sema::ActOnSEHExceptBlock(SourceLocation Loc,
+                          Expr *FilterExpr,
+                          Stmt *Block) {
+  assert(FilterExpr && Block);
+
+  if(!FilterExpr->getType()->isIntegerType()) {
+    return StmtError(Diag(FilterExpr->getExprLoc(), diag::err_filter_expression_integral) << FilterExpr->getType());
+  }
+
+  return Owned(SEHExceptStmt::Create(Context,Loc,FilterExpr,Block));
+}
+
+StmtResult
+Sema::ActOnSEHFinallyBlock(SourceLocation Loc,
+                           Stmt *Block) {
+  assert(Block);
+  return Owned(SEHFinallyStmt::Create(Context,Loc,Block));
+}
+

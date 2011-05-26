@@ -199,6 +199,9 @@ def err_expected_class_name : Error<"expected class name">;
 def err_unspecified_vla_size_with_static : Error<
   "'static' may not be used with an unspecified variable length array size">;
 
+def err_expected_case_before_expression: Error<
+  "expected 'case' keyword before expression">;
+
 // Declarations.
 def err_typename_requires_specqual : Error<
   "type name requires a specifier or qualifier">;
@@ -278,7 +281,7 @@ def err_missing_id_definition : Error<"cannot find definition of 'id'">;
 def err_missing_proto_definition : Error<
   "cannot find definition of 'Protocol'">;
 def err_missing_class_definition : Error<"cannot find definition of 'Class'">;
-def warn_expected_implementation : Warning<
+def err_expected_implementation : Error<
   "@end must appear in an @implementation context">;
 def error_property_ivar_decl : Error<
   "property synthesize requires specification of an ivar">;
@@ -335,6 +338,9 @@ def err_operator_string_not_empty : Error<
 // Classes.
 def err_anon_type_definition : Error<
   "declaration of anonymous %0 must be a definition">;
+def err_default_delete_in_multiple_declaration : Error<
+  "'= %select{default|delete}0' is a function definition and must occur in a "
+  "standalone declaration">;
 
 def err_cxx0x_attribute_forbids_arguments : Error<
   "C++0x attribute '%0' cannot have an argument list">;
@@ -377,7 +383,7 @@ def err_enum_template : Error<"enumeration cannot be a template">;
 
 def err_missing_dependent_template_keyword : Error<
   "use 'template' keyword to treat '%0' as a dependent template name">;
-def war_missing_dependent_template_keyword : ExtWarn<
+def warn_missing_dependent_template_keyword : ExtWarn<
   "use 'template' keyword to treat '%0' as a dependent template name">;
 
 def warn_static_inline_explicit_inst_ignored : Warning<
@@ -395,6 +401,8 @@ def err_out_of_line_type_names_constructor : Error<
   "type wherever a constructor can be declared">;
 
 def err_expected_qualified_after_typename : Error<
+  "expected a qualified name after 'typename'">;
+def warn_expected_qualified_after_typename : ExtWarn<
   "expected a qualified name after 'typename'">;
 def err_expected_semi_after_tagdecl : Error<
   "expected ';' after %0">;
@@ -424,12 +432,17 @@ def err_missing_whitespace_digraph : Error<
 
 def warn_deleted_function_accepted_as_extension: ExtWarn<
   "deleted function definition accepted as a C++0x extension">, InGroup<CXX0x>;
+def warn_defaulted_function_accepted_as_extension: ExtWarn<
+  "defaulted function definition accepted as a C++0x extension">,
+  InGroup<CXX0x>;
 
 // C++0x alias-declaration
 def ext_alias_declaration : ExtWarn<
   "alias declarations accepted as a C++0x extension">, InGroup<CXX0x>;
 def err_alias_declaration_not_identifier : Error<
   "name defined in alias declaration must be an identifier">;
+def err_alias_declaration_specialization : Error<
+  "%select{partial specialization|explicit specialization|explicit instantiation}0 of alias templates is not permitted">;
     
 // C++0x override control
 def ext_override_control_keyword : Extension<
@@ -475,6 +488,8 @@ def warn_pragma_expected_rparen : Warning<
   "missing ')' after '#pragma %0' - ignoring">;
 def warn_pragma_expected_identifier : Warning<
   "expected identifier in '#pragma %0' - ignored">;  
+def warn_pragma_ms_struct : Warning<
+  "incorrect use of '#pragma ms_struct on|off' - ignored">;  
 def warn_pragma_extra_tokens_at_eol : Warning<
   "extra tokens at end of '#pragma %0' - ignored">; 
 // - #pragma options
@@ -508,6 +523,18 @@ def warn_pragma_expected_enable_disable : Warning<
   "expected 'enable' or 'disable' - ignoring">;
 def warn_pragma_unknown_extension : Warning<
   "unknown OpenCL extension %0 - ignoring">;
+
+def err_seh_expected_handler : Error<
+  "expected '__except' or '__finally' block">;
+
+def err_seh___except_block : Error<
+  "%0 only allowed in __except block">;
+
+def err_seh___except_filter : Error<
+  "%0 only allowed in __except filter expression">;
+
+def err_seh___finally_block : Error<
+  "%0 only allowed in __finally block">;
 
 } // end of Parse Issue category.
 } // end of Parser diagnostics

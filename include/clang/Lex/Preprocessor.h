@@ -84,6 +84,7 @@ class Preprocessor : public llvm::RefCountedBase<Preprocessor> {
   IdentifierInfo *Ident_Pragma, *Ident__pragma;    // _Pragma, __pragma
   IdentifierInfo *Ident__VA_ARGS__;                // __VA_ARGS__
   IdentifierInfo *Ident__has_feature;              // __has_feature
+  IdentifierInfo *Ident__has_extension;            // __has_extension
   IdentifierInfo *Ident__has_builtin;              // __has_builtin
   IdentifierInfo *Ident__has_attribute;            // __has_attribute
   IdentifierInfo *Ident__has_include;              // __has_include
@@ -217,6 +218,10 @@ class Preprocessor : public llvm::RefCountedBase<Preprocessor> {
   /// push_macro directive, we keep a MacroInfo stack used to restore 
   /// previous macro value.
   llvm::DenseMap<IdentifierInfo*, std::vector<MacroInfo*> > PragmaPushMacroInfo;
+
+  /// \brief Instantiation source location for the last macro that expanded
+  /// to no tokens.
+  SourceLocation LastEmptyMacroInstantiationLoc;
 
   // Various statistics we track for performance analysis.
   unsigned NumDirectives, NumIncluded, NumDefined, NumUndefined, NumPragma;
@@ -366,6 +371,12 @@ public:
   macro_iterator macro_begin(bool IncludeExternalMacros = true) const;
   macro_iterator macro_end(bool IncludeExternalMacros = true) const;
 
+  /// \brief Instantiation source location for the last macro that expanded
+  /// to no tokens.
+  SourceLocation getLastEmptyMacroInstantiationLoc() const {
+    return LastEmptyMacroInstantiationLoc;
+  }
+
   const std::string &getPredefines() const { return Predefines; }
   /// setPredefines - Set the predefines for this Preprocessor.  These
   /// predefines are automatically injected when parsing the main file.
@@ -431,7 +442,7 @@ public:
   
   /// \brief Create a new preprocessing record, which will keep track of 
   /// all macro expansions, macro definitions, etc.
-  void createPreprocessingRecord();
+  void createPreprocessingRecord(bool IncludeNestedMacroInstantiations);
   
   /// EnterMainSourceFile - Enter the specified FileID as the main source file,
   /// which implicitly adds the builtin defines etc.
@@ -773,6 +784,38 @@ public:
   /// updating the token kind accordingly.
   IdentifierInfo *LookUpIdentifierInfo(Token &Identifier) const;
 
+private:
+  llvm::DenseMap<IdentifierInfo*,unsigned> PoisonReasons;
+
+public:
+
+  // SetPoisonReason - Call this function to indicate the reason for
+  // poisoning an identifier. If that identifier is accessed while
+  // poisoned, then this reason will be used instead of the default
+  // "poisoned" diagnostic.
+  void SetPoisonReason(IdentifierInfo *II, unsigned DiagID);
+
+  // HandlePoisonedIdentifier - Display reason for poisoned
+  // identifier.
+  void HandlePoisonedIdentifier(Token & Tok);
+
+  void MaybeHandlePoisonedIdentifier(Token & Identifier) {
+    if(IdentifierInfo * II = Identifier.getIdentifierInfo()) {
+      if(II->isPoisoned()) {
+        HandlePoisonedIdentifier(Identifier);
+      }
+    }
+  }
+
+private:
+  /// Identifiers used for SEH handling in Borland. These are only
+  /// allowed in particular circumstances
+  IdentifierInfo *Ident__exception_code, *Ident___exception_code, *Ident_GetExceptionCode; // __except block
+  IdentifierInfo *Ident__exception_info, *Ident___exception_info, *Ident_GetExceptionInfo; // __except filter expression
+  IdentifierInfo *Ident__abnormal_termination, *Ident___abnormal_termination, *Ident_AbnormalTermination; // __finally
+public:
+  void PoisonSEHIdentifiers(bool Poison = true); // Borland
+
   /// HandleIdentifier - This callback is invoked when the lexer reads an
   /// identifier and has filled in the tokens IdentifierInfo member.  This
   /// callback potentially macro expands it or turns it into a named token (like
@@ -834,7 +877,8 @@ public:
   const FileEntry *LookupFile(llvm::StringRef Filename,
                               bool isAngled, const DirectoryLookup *FromDir,
                               const DirectoryLookup *&CurDir,
-                              llvm::SmallVectorImpl<char> *RawPath);
+                              llvm::SmallVectorImpl<char> *SearchPath,
+                              llvm::SmallVectorImpl<char> *RelativePath);
 
   /// GetCurLookup - The DirectoryLookup structure used to find the current
   /// FileEntry, if CurLexer is non-null and if applicable.  This allows us to

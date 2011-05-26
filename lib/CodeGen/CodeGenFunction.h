@@ -1035,7 +1035,7 @@ public:
   CodeGenFunction(CodeGenModule &cgm);
 
   CodeGenTypes &getTypes() const { return CGM.getTypes(); }
-  ASTContext &getContext() const;
+  ASTContext &getContext() const { return CGM.getContext(); }
   CGDebugInfo *getDebugInfo() { 
     if (DisableDebugInfo) 
       return NULL;
@@ -1076,7 +1076,8 @@ public:
   void GenerateObjCMethod(const ObjCMethodDecl *OMD);
 
   void StartObjCMethod(const ObjCMethodDecl *MD,
-                       const ObjCContainerDecl *CD);
+                       const ObjCContainerDecl *CD,
+                       SourceLocation StartLoc);
 
   /// GenerateObjCGetter - Synthesize an Objective-C property getter function.
   void GenerateObjCGetter(ObjCImplementationDecl *IMP,
@@ -1156,6 +1157,9 @@ public:
   /// GenerateThunk - Generate a thunk for the given method.
   void GenerateThunk(llvm::Function *Fn, const CGFunctionInfo &FnInfo,
                      GlobalDecl GD, const ThunkInfo &Thunk);
+
+  void GenerateVarArgsThunk(llvm::Function *Fn, const CGFunctionInfo &FnInfo,
+                            GlobalDecl GD, const ThunkInfo &Thunk);
 
   void EmitCtorPrologue(const CXXConstructorDecl *CD, CXXCtorType Type,
                         FunctionArgList &Args);
@@ -1500,6 +1504,12 @@ public:
   void EmitDelegateCXXConstructorCall(const CXXConstructorDecl *Ctor,
                                       CXXCtorType CtorType,
                                       const FunctionArgList &Args);
+  // It's important not to confuse this and the previous function. Delegating
+  // constructors are the C++0x feature. The constructor delegate optimization
+  // is used to reduce duplication in the base and complete consturctors where
+  // they are substantially the same.
+  void EmitDelegatingCXXConstructorCall(const CXXConstructorDecl *Ctor,
+                                        const FunctionArgList &Args);
   void EmitCXXConstructorCall(const CXXConstructorDecl *D, CXXCtorType Type,
                               bool ForVirtualBase, llvm::Value *This,
                               CallExpr::const_arg_iterator ArgBeg,
@@ -1913,6 +1923,9 @@ public:
   RValue EmitCXXMemberPointerCallExpr(const CXXMemberCallExpr *E,
                                       ReturnValueSlot ReturnValue);
 
+  llvm::Value *EmitCXXOperatorMemberCallee(const CXXOperatorCallExpr *E,
+                                           const CXXMethodDecl *MD,
+                                           llvm::Value *This);
   RValue EmitCXXOperatorMemberCallExpr(const CXXOperatorCallExpr *E,
                                        const CXXMethodDecl *MD,
                                        ReturnValueSlot ReturnValue);

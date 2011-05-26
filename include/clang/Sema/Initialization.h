@@ -65,7 +65,7 @@ public:
     /// \brief The entity being initialized is a base member subobject.
     EK_Base,
     /// \brief The initialization is being done by a delegating constructor.
-    EK_Delegation,
+    EK_Delegating,
     /// \brief The entity being initialized is an element of a vector.
     /// or vector.
     EK_VectorElement,
@@ -101,7 +101,8 @@ private:
       /// the temporary is being created.
       unsigned Location;
       
-      /// \brief Whether the 
+      /// \brief Whether the entity being initialized may end up using the
+      /// named return value optimization (NRVO).
       bool NRVO;
     } LocAndNRVO;
     
@@ -215,7 +216,7 @@ public:
 
   /// \brief Create the initialization entity for a delegated constructor.
   static InitializedEntity InitializeDelegation(QualType Type) {
-    return InitializedEntity(EK_Delegation, SourceLocation(), Type);
+    return InitializedEntity(EK_Delegating, SourceLocation(), Type);
   }
   
   /// \brief Create the initialization entity for a member subobject.

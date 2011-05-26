@@ -176,7 +176,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
                                         unsigned BuiltinID, const CallExpr *E) {
   // See if we can constant fold this builtin.  If so, don't emit it at all.
   Expr::EvalResult Result;
-  if (E->Evaluate(Result, CGM.getContext())) {
+  if (E->Evaluate(Result, CGM.getContext()) &&
+      !Result.hasSideEffects()) {
     if (Result.Val.isInt())
       return RValue::get(llvm::ConstantInt::get(getLLVMContext(),
                                                 Result.Val.getInt()));
@@ -312,9 +313,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   }
   case Builtin::BI__builtin_expect: {
     // FIXME: pass expect through to LLVM
+    Value *ArgValue = EmitScalarExpr(E->getArg(0));
     if (E->getArg(1)->HasSideEffects(getContext()))
       (void)EmitScalarExpr(E->getArg(1));
-    return RValue::get(EmitScalarExpr(E->getArg(0)));
+    return RValue::get(ArgValue);
   }
   case Builtin::BI__builtin_bswap32:
   case Builtin::BI__builtin_bswap64: {
@@ -2141,16 +2143,21 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     // If palignr is shifting the pair of vectors more than 32 bytes, emit zero.
     return llvm::Constant::getNullValue(ConvertType(E->getType()));
   }
-  case X86::BI__builtin_ia32_loaddqu: {
-    const llvm::Type *VecTy = ConvertType(E->getType());
-    const llvm::Type *IntTy = llvm::IntegerType::get(getLLVMContext(), 128);
+  case X86::BI__builtin_ia32_movntps:
+  case X86::BI__builtin_ia32_movntpd:
+  case X86::BI__builtin_ia32_movntdq:
+  case X86::BI__builtin_ia32_movnti: {
+    llvm::MDNode *Node = llvm::MDNode::get(getLLVMContext(),
+                                           Builder.getInt32(1));
 
+    // Convert the type of the pointer to a pointer to the stored type.
     Value *BC = Builder.CreateBitCast(Ops[0],
-                                      llvm::PointerType::getUnqual(IntTy),
+                                llvm::PointerType::getUnqual(Ops[1]->getType()),
                                       "cast");
-    LoadInst *LI = Builder.CreateLoad(BC);
-    LI->setAlignment(1); // Unaligned load.
-    return Builder.CreateBitCast(LI, VecTy, "loadu.cast");
+    StoreInst *SI = Builder.CreateStore(Ops[1], BC);
+    SI->setMetadata(CGM.getModule().getMDKindID("nontemporal"), Node);
+    SI->setAlignment(16);
+    return SI;
   }
   // 3DNow!
   case X86::BI__builtin_ia32_pavgusb:

@@ -102,7 +102,7 @@ bool Sema::CheckEquivalentExceptionSpec(FunctionDecl *Old, FunctionDecl *New) {
   bool MissingEmptyExceptionSpecification = false;
   unsigned DiagID = diag::err_mismatched_exception_spec;
   if (getLangOptions().Microsoft)
-    DiagID = diag::war_mismatched_exception_spec; 
+    DiagID = diag::warn_mismatched_exception_spec; 
   
   if (!CheckEquivalentExceptionSpec(PDiag(DiagID),
                                     PDiag(diag::note_previous_declaration),
@@ -265,7 +265,7 @@ bool Sema::CheckEquivalentExceptionSpec(
     const FunctionProtoType *New, SourceLocation NewLoc) {
   unsigned DiagID = diag::err_mismatched_exception_spec;
   if (getLangOptions().Microsoft)
-    DiagID = diag::war_mismatched_exception_spec; 
+    DiagID = diag::warn_mismatched_exception_spec; 
   return CheckEquivalentExceptionSpec(
                                       PDiag(DiagID),
                                       PDiag(diag::note_previous_declaration),
@@ -701,7 +701,23 @@ bool Sema::CheckExceptionSpecCompatibility(Expr *From, QualType ToType)
 
 bool Sema::CheckOverridingFunctionExceptionSpec(const CXXMethodDecl *New,
                                                 const CXXMethodDecl *Old) {
-  return CheckExceptionSpecSubset(PDiag(diag::err_override_exception_spec),
+  if (getLangOptions().CPlusPlus0x && isa<CXXDestructorDecl>(New)) {
+    // Don't check uninstantiated template destructors at all. We can only
+    // synthesize correct specs after the template is instantiated.
+    if (New->getParent()->isDependentType())
+      return false;
+    if (New->getParent()->isBeingDefined()) {
+      // The destructor might be updated once the definition is finished. So
+      // remember it and check later.
+      DelayedDestructorExceptionSpecChecks.push_back(std::make_pair(
+        cast<CXXDestructorDecl>(New), cast<CXXDestructorDecl>(Old)));
+      return false;
+    }
+  }
+  unsigned DiagID = diag::err_override_exception_spec;
+  if (getLangOptions().Microsoft)
+    DiagID = diag::warn_override_exception_spec;
+  return CheckExceptionSpecSubset(PDiag(DiagID),
                                   PDiag(diag::note_overridden_virtual_function),
                                   Old->getType()->getAs<FunctionProtoType>(),
                                   Old->getLocation(),

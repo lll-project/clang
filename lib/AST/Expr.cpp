@@ -274,40 +274,20 @@ void DeclRefExpr::computeDependence() {
     ExprBits.ContainsUnexpandedParameterPack = true;
 }
 
-DeclRefExpr::DeclRefExpr(NestedNameSpecifierLoc QualifierLoc, 
-                         ValueDecl *D, SourceLocation NameLoc,
-                         const TemplateArgumentListInfo *TemplateArgs,
-                         QualType T, ExprValueKind VK)
-  : Expr(DeclRefExprClass, T, VK, OK_Ordinary, false, false, false),
-    DecoratedD(D,
-               (QualifierLoc? HasQualifierFlag : 0) |
-               (TemplateArgs ? HasExplicitTemplateArgumentListFlag : 0)),
-    Loc(NameLoc) {
-  if (QualifierLoc) {
-    NameQualifier *NQ = getNameQualifier();
-    NQ->QualifierLoc = QualifierLoc;
-  }
-      
-  if (TemplateArgs)
-    getExplicitTemplateArgs().initializeFrom(*TemplateArgs);
-
-  computeDependence();
-}
-
 DeclRefExpr::DeclRefExpr(NestedNameSpecifierLoc QualifierLoc,
                          ValueDecl *D, const DeclarationNameInfo &NameInfo,
+                         NamedDecl *FoundD,
                          const TemplateArgumentListInfo *TemplateArgs,
                          QualType T, ExprValueKind VK)
   : Expr(DeclRefExprClass, T, VK, OK_Ordinary, false, false, false),
-    DecoratedD(D,
-               (QualifierLoc? HasQualifierFlag : 0) |
-               (TemplateArgs ? HasExplicitTemplateArgumentListFlag : 0)),
-    Loc(NameInfo.getLoc()), DNLoc(NameInfo.getInfo()) {
-  if (QualifierLoc) {
-    NameQualifier *NQ = getNameQualifier();
-    NQ->QualifierLoc = QualifierLoc;
-  }
-
+    D(D), Loc(NameInfo.getLoc()), DNLoc(NameInfo.getInfo()) {
+  DeclRefExprBits.HasQualifier = QualifierLoc ? 1 : 0;
+  if (QualifierLoc)
+    getInternalQualifierLoc() = QualifierLoc;
+  DeclRefExprBits.HasFoundDecl = FoundD ? 1 : 0;
+  if (FoundD)
+    getInternalFoundDecl() = FoundD;
+  DeclRefExprBits.HasExplicitTemplateArgs = TemplateArgs ? 1 : 0;
   if (TemplateArgs)
     getExplicitTemplateArgs().initializeFrom(*TemplateArgs);
 
@@ -320,10 +300,11 @@ DeclRefExpr *DeclRefExpr::Create(ASTContext &Context,
                                  SourceLocation NameLoc,
                                  QualType T,
                                  ExprValueKind VK,
+                                 NamedDecl *FoundD,
                                  const TemplateArgumentListInfo *TemplateArgs) {
   return Create(Context, QualifierLoc, D,
                 DeclarationNameInfo(D->getDeclName(), NameLoc),
-                T, VK, TemplateArgs);
+                T, VK, FoundD, TemplateArgs);
 }
 
 DeclRefExpr *DeclRefExpr::Create(ASTContext &Context,
@@ -332,29 +313,38 @@ DeclRefExpr *DeclRefExpr::Create(ASTContext &Context,
                                  const DeclarationNameInfo &NameInfo,
                                  QualType T,
                                  ExprValueKind VK,
+                                 NamedDecl *FoundD,
                                  const TemplateArgumentListInfo *TemplateArgs) {
+  // Filter out cases where the found Decl is the same as the value refenenced.
+  if (D == FoundD)
+    FoundD = 0;
+
   std::size_t Size = sizeof(DeclRefExpr);
   if (QualifierLoc != 0)
-    Size += sizeof(NameQualifier);
-  
+    Size += sizeof(NestedNameSpecifierLoc);
+  if (FoundD)
+    Size += sizeof(NamedDecl *);
   if (TemplateArgs)
     Size += ExplicitTemplateArgumentList::sizeFor(*TemplateArgs);
-  
+
   void *Mem = Context.Allocate(Size, llvm::alignOf<DeclRefExpr>());
-  return new (Mem) DeclRefExpr(QualifierLoc, D, NameInfo, TemplateArgs, T, VK);
+  return new (Mem) DeclRefExpr(QualifierLoc, D, NameInfo, FoundD, TemplateArgs,
+                               T, VK);
 }
 
-DeclRefExpr *DeclRefExpr::CreateEmpty(ASTContext &Context, 
+DeclRefExpr *DeclRefExpr::CreateEmpty(ASTContext &Context,
                                       bool HasQualifier,
+                                      bool HasFoundDecl,
                                       bool HasExplicitTemplateArgs,
                                       unsigned NumTemplateArgs) {
   std::size_t Size = sizeof(DeclRefExpr);
   if (HasQualifier)
-    Size += sizeof(NameQualifier);
-  
+    Size += sizeof(NestedNameSpecifierLoc);
+  if (HasFoundDecl)
+    Size += sizeof(NamedDecl *);
   if (HasExplicitTemplateArgs)
     Size += ExplicitTemplateArgumentList::sizeFor(NumTemplateArgs);
-  
+
   void *Mem = Context.Allocate(Size, llvm::alignOf<DeclRefExpr>());
   return new (Mem) DeclRefExpr(EmptyShell());
 }
@@ -820,11 +810,11 @@ QualType CallExpr::getCallReturnType() const {
     CalleeType = FnTypePtr->getPointeeType();
   else if (const BlockPointerType *BPT = CalleeType->getAs<BlockPointerType>())
     CalleeType = BPT->getPointeeType();
-  else if (const MemberPointerType *MPT
-                                      = CalleeType->getAs<MemberPointerType>())
-    CalleeType = MPT->getPointeeType();
+  else if (CalleeType->isSpecificPlaceholderType(BuiltinType::BoundMember))
+    // This should never be overloaded and so should never return null.
+    CalleeType = Expr::findBoundMemberType(getCallee());
     
-  const FunctionType *FnType = CalleeType->getAs<FunctionType>();
+  const FunctionType *FnType = CalleeType->castAs<FunctionType>();
   return FnType->getResultType();
 }
 
@@ -1289,6 +1279,15 @@ Expr *InitListExpr::updateInit(ASTContext &C, unsigned Init, Expr *expr) {
   return Result;
 }
 
+void InitListExpr::setArrayFiller(Expr *filler) {
+  ArrayFillerOrUnionFieldInit = filler;
+  // Fill out any "holes" in the array due to designated initializers.
+  Expr **inits = getInits();
+  for (unsigned i = 0, e = getNumInits(); i != e; ++i)
+    if (inits[i] == 0)
+      inits[i] = filler;
+}
+
 SourceRange InitListExpr::getSourceRange() const {
   if (SyntacticForm)
     return SyntacticForm->getSourceRange();
@@ -1614,6 +1613,30 @@ bool Expr::isBoundMemberFunction(ASTContext &Ctx) const {
   return ClassifyLValue(Ctx) == Expr::LV_MemberFunction;
 }
 
+QualType Expr::findBoundMemberType(const Expr *expr) {
+  assert(expr->getType()->isSpecificPlaceholderType(BuiltinType::BoundMember));
+
+  // Bound member expressions are always one of these possibilities:
+  //   x->m      x.m      x->*y      x.*y
+  // (possibly parenthesized)
+
+  expr = expr->IgnoreParens();
+  if (const MemberExpr *mem = dyn_cast<MemberExpr>(expr)) {
+    assert(isa<CXXMethodDecl>(mem->getMemberDecl()));
+    return mem->getMemberDecl()->getType();
+  }
+
+  if (const BinaryOperator *op = dyn_cast<BinaryOperator>(expr)) {
+    QualType type = op->getRHS()->getType()->castAs<MemberPointerType>()
+                      ->getPointeeType();
+    assert(type->isFunctionType());
+    return type;
+  }
+
+  assert(isa<UnresolvedMemberExpr>(expr));
+  return QualType();
+}
+
 static Expr::CanThrowResult MergeCanThrow(Expr::CanThrowResult CT1,
                                           Expr::CanThrowResult CT2) {
   // CanThrowResult constants are ordered so that the maximum is the correct
@@ -1670,6 +1693,9 @@ static Expr::CanThrowResult CanDynamicCastThrow(const CXXDynamicCastExpr *DC) {
   if (!DC->getTypeAsWritten()->isReferenceType())
     return Expr::CT_Cannot;
 
+  if (DC->getSubExpr()->isTypeDependent())
+    return Expr::CT_Dependent;
+
   return DC->getCastKind() == clang::CK_Dynamic? Expr::CT_Can : Expr::CT_Cannot;
 }
 
@@ -1724,7 +1750,14 @@ Expr::CanThrowResult Expr::CanThrow(ASTContext &C) const {
   case CallExprClass:
   case CXXOperatorCallExprClass:
   case CXXMemberCallExprClass: {
-    CanThrowResult CT = CanCalleeThrow(C,cast<CallExpr>(this)->getCalleeDecl());
+    const CallExpr *CE = cast<CallExpr>(this);
+    CanThrowResult CT;
+    if (isTypeDependent())
+      CT = CT_Dependent;
+    else if (isa<CXXPseudoDestructorExpr>(CE->getCallee()->IgnoreParens()))
+      CT = CT_Cannot;
+    else
+      CT = CanCalleeThrow(C, CE->getCalleeDecl());
     if (CT == CT_Can)
       return CT;
     return MergeCanThrow(CT, CanSubExprsThrow(C, this));
@@ -1740,7 +1773,11 @@ Expr::CanThrowResult Expr::CanThrow(ASTContext &C) const {
   }
 
   case CXXNewExprClass: {
-    CanThrowResult CT = MergeCanThrow(
+    CanThrowResult CT;
+    if (isTypeDependent())
+      CT = CT_Dependent;
+    else
+      CT = MergeCanThrow(
         CanCalleeThrow(C, cast<CXXNewExpr>(this)->getOperatorNew()),
         CanCalleeThrow(C, cast<CXXNewExpr>(this)->getConstructor(),
                        /*NullThrows*/false));
@@ -1750,22 +1787,18 @@ Expr::CanThrowResult Expr::CanThrow(ASTContext &C) const {
   }
 
   case CXXDeleteExprClass: {
-    CanThrowResult CT = CanCalleeThrow(C,
-        cast<CXXDeleteExpr>(this)->getOperatorDelete());
-    if (CT == CT_Can)
-      return CT;
-    const Expr *Arg = cast<CXXDeleteExpr>(this)->getArgument();
-    // Unwrap exactly one implicit cast, which converts all pointers to void*.
-    if (const ImplicitCastExpr *Cast = dyn_cast<ImplicitCastExpr>(Arg))
-      Arg = Cast->getSubExpr();
-    if (const PointerType *PT = Arg->getType()->getAs<PointerType>()) {
-      if (const RecordType *RT = PT->getPointeeType()->getAs<RecordType>()) {
-        CanThrowResult CT2 = CanCalleeThrow(C,
-            cast<CXXRecordDecl>(RT->getDecl())->getDestructor());
-        if (CT2 == CT_Can)
-          return CT2;
-        CT = MergeCanThrow(CT, CT2);
+    CanThrowResult CT;
+    QualType DTy = cast<CXXDeleteExpr>(this)->getDestroyedType();
+    if (DTy.isNull() || DTy->isDependentType()) {
+      CT = CT_Dependent;
+    } else {
+      CT = CanCalleeThrow(C, cast<CXXDeleteExpr>(this)->getOperatorDelete());
+      if (const RecordType *RT = DTy->getAs<RecordType>()) {
+        const CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
+        CT = MergeCanThrow(CT, CanCalleeThrow(C, RD->getDestructor()));
       }
+      if (CT == CT_Can)
+        return CT;
     }
     return MergeCanThrow(CT, CanSubExprsThrow(C, this));
   }

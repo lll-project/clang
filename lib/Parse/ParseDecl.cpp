@@ -171,6 +171,7 @@ void Parser::ParseGNUAttributes(ParsedAttributes &attrs,
           case tok::kw_short:
           case tok::kw_int:
           case tok::kw_long:
+          case tok::kw___int64:
           case tok::kw_signed:
           case tok::kw_unsigned:
           case tok::kw_float:
@@ -252,9 +253,17 @@ void Parser::ParseMicrosoftDeclSpec(ParsedAttributes &attrs) {
     SkipUntil(tok::r_paren, true); // skip until ) or ;
     return;
   }
+
   while (Tok.getIdentifierInfo()) {
     IdentifierInfo *AttrName = Tok.getIdentifierInfo();
     SourceLocation AttrNameLoc = ConsumeToken();
+    
+    // FIXME: Remove this when we have proper __declspec(property()) support.
+    // Just skip everything inside property().
+    if (AttrName->getName() == "property") {
+      ConsumeParen();
+      SkipUntil(tok::r_paren);
+    }
     if (Tok.is(tok::l_paren)) {
       ConsumeParen();
       // FIXME: This doesn't parse __declspec(property(get=get_func_name))
@@ -724,23 +733,24 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(StmtVector &Stmts,
   // Parse the common declaration-specifiers piece.
   ParsingDeclSpec DS(*this);
   DS.takeAttributesFrom(attrs);
+
   ParseDeclarationSpecifiers(DS, ParsedTemplateInfo(), AS_none,
                              getDeclSpecContextFromDeclaratorContext(Context));
   StmtResult R = Actions.ActOnVlaStmt(DS);
   if (R.isUsable())
     Stmts.push_back(R.release());
-
+  
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
   if (Tok.is(tok::semi)) {
     if (RequireSemi) ConsumeToken();
     Decl *TheDecl = Actions.ParsedFreeStandingDeclSpec(getCurScope(), AS_none,
-                                                           DS);
+                                                       DS);
     DS.complete(TheDecl);
     return Actions.ConvertDeclToDeclGroup(TheDecl);
   }
-
-  return ParseDeclGroup(DS, Context, /*FunctionDefs=*/ false, &DeclEnd, FRI);
+  
+  return ParseDeclGroup(DS, Context, /*FunctionDefs=*/ false, &DeclEnd, FRI);  
 }
 
 /// ParseDeclGroup - Having concluded that this is either a function
@@ -958,12 +968,17 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(Declarator &D,
                                diag::err_invalid_equalequal_after_declarator)) {
     ConsumeToken();
     if (Tok.is(tok::kw_delete)) {
-      SourceLocation DelLoc = ConsumeToken();
-      
-      if (!getLang().CPlusPlus0x)
-        Diag(DelLoc, diag::warn_deleted_function_accepted_as_extension);
-
-      Actions.SetDeclDeleted(ThisDecl, DelLoc);
+      if (D.isFunctionDeclarator())
+        Diag(ConsumeToken(), diag::err_default_delete_in_multiple_declaration)
+          << 1 /* delete */;
+      else
+        Diag(ConsumeToken(), diag::err_deleted_non_function);
+    } else if (Tok.is(tok::kw_default)) {
+      if (D.isFunctionDeclarator())
+        Diag(Tok, diag::err_default_delete_in_multiple_declaration)
+          << 1 /* delete */;
+      else
+        Diag(ConsumeToken(), diag::err_default_special_members);
     } else {
       if (getLang().CPlusPlus && D.getCXXScopeSpec().isSet()) {
         EnterScope(0);
@@ -1143,21 +1158,25 @@ bool Parser::ParseImplicitInt(DeclSpec &DS, CXXScopeSpec *SS,
   //
   // C++ doesn't need this, and isTagName doesn't take SS.
   if (SS == 0) {
-    const char *TagName = 0;
+    const char *TagName = 0, *FixitTagName = 0;
     tok::TokenKind TagKind = tok::unknown;
 
     switch (Actions.isTagName(*Tok.getIdentifierInfo(), getCurScope())) {
       default: break;
-      case DeclSpec::TST_enum:  TagName="enum"  ;TagKind=tok::kw_enum  ;break;
-      case DeclSpec::TST_union: TagName="union" ;TagKind=tok::kw_union ;break;
-      case DeclSpec::TST_struct:TagName="struct";TagKind=tok::kw_struct;break;
-      case DeclSpec::TST_class: TagName="class" ;TagKind=tok::kw_class ;break;
+      case DeclSpec::TST_enum:
+        TagName="enum"  ; FixitTagName = "enum "  ; TagKind=tok::kw_enum ;break;
+      case DeclSpec::TST_union:
+        TagName="union" ; FixitTagName = "union " ;TagKind=tok::kw_union ;break;
+      case DeclSpec::TST_struct:
+        TagName="struct"; FixitTagName = "struct ";TagKind=tok::kw_struct;break;
+      case DeclSpec::TST_class:
+        TagName="class" ; FixitTagName = "class " ;TagKind=tok::kw_class ;break;
     }
 
     if (TagName) {
       Diag(Loc, diag::err_use_of_tag_name_without_tag)
         << Tok.getIdentifierInfo() << TagName << getLang().CPlusPlus
-        << FixItHint::CreateInsertion(Tok.getLocation(),TagName);
+        << FixItHint::CreateInsertion(Tok.getLocation(),FixitTagName);
 
       // Parse this as a tag as if the missing tag were present.
       if (TagKind == tok::kw_enum)
@@ -1250,9 +1269,12 @@ Parser::getDeclSpecContextFromDeclaratorContext(unsigned Context) {
 void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                         const ParsedTemplateInfo &TemplateInfo,
                                         AccessSpecifier AS,
-                                        DeclSpecContext DSContext) {  
-  DS.SetRangeStart(Tok.getLocation());
-  DS.SetRangeEnd(Tok.getLocation());
+                                        DeclSpecContext DSContext) { 
+  if (DS.getSourceRange().isInvalid()) {
+    DS.SetRangeStart(Tok.getLocation());
+    DS.SetRangeEnd(Tok.getLocation());
+  }
+  
   while (1) {
     bool isInvalid = false;
     const char *PrevSpec = 0;
@@ -1470,6 +1492,24 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       continue;
     }
 
+    case tok::kw___is_signed:
+      // GNU libstdc++ 4.4 uses __is_signed as an identifier, but Clang
+      // typically treats it as a trait. If we see __is_signed as it appears
+      // in libstdc++, e.g.,
+      //
+      //   static const bool __is_signed;
+      //
+      // then treat __is_signed as an identifier rather than as a keyword.
+      if (DS.getTypeSpecType() == TST_bool &&
+          DS.getTypeQualifiers() == DeclSpec::TQ_const &&
+          DS.getStorageClassSpec() == DeclSpec::SCS_static) {
+        Tok.getIdentifierInfo()->RevertTokenIDToIdentifier();
+        Tok.setKind(tok::identifier);
+      }
+
+      // We're done with the declaration-specifiers.
+      goto DoneWithDeclSpec;
+        
       // typedef-name
     case tok::identifier: {
       // In C++, check to see if this is a scope specifier like foo::bar::, if
@@ -1680,6 +1720,10 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         isInvalid = DS.SetTypeSpecWidth(DeclSpec::TSW_longlong, Loc, PrevSpec,
                                         DiagID);
       break;
+    case tok::kw___int64:
+        isInvalid = DS.SetTypeSpecWidth(DeclSpec::TSW_longlong, Loc, PrevSpec,
+                                        DiagID);
+      break;
     case tok::kw_signed:
       isInvalid = DS.SetTypeSpecSign(DeclSpec::TSS_signed, Loc, PrevSpec,
                                      DiagID);
@@ -1814,6 +1858,9 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw_decltype:
       ParseDecltypeSpecifier(DS);
       continue;
+
+    case tok::kw___underlying_type:
+      ParseUnderlyingTypeSpecifier(DS);
 
     // OpenCL qualifiers:
     case tok::kw_private: 
@@ -1978,6 +2025,10 @@ bool Parser::ParseOptionalTypeSpecifier(DeclSpec &DS, bool& isInvalid,
       isInvalid = DS.SetTypeSpecWidth(DeclSpec::TSW_longlong, Loc, PrevSpec,
                                       DiagID);
     break;
+  case tok::kw___int64:
+      isInvalid = DS.SetTypeSpecWidth(DeclSpec::TSW_longlong, Loc, PrevSpec,
+                                      DiagID);
+    break;
   case tok::kw_signed:
     isInvalid = DS.SetTypeSpecSign(DeclSpec::TSS_signed, Loc, PrevSpec, DiagID);
     break;
@@ -2079,6 +2130,11 @@ bool Parser::ParseOptionalTypeSpecifier(DeclSpec &DS, bool& isInvalid,
   // C++0x decltype support.
   case tok::kw_decltype:
     ParseDecltypeSpecifier(DS);
+    return true;
+
+  // C++0x type traits support.
+  case tok::kw___underlying_type:
+    ParseUnderlyingTypeSpecifier(DS);
     return true;
 
   // OpenCL qualifiers:
@@ -2696,6 +2752,7 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
     // type-specifiers
   case tok::kw_short:
   case tok::kw_long:
+  case tok::kw___int64:
   case tok::kw_signed:
   case tok::kw_unsigned:
   case tok::kw__Complex:
@@ -2764,6 +2821,7 @@ bool Parser::isTypeSpecifierQualifier() {
     // type-specifiers
   case tok::kw_short:
   case tok::kw_long:
+  case tok::kw___int64:
   case tok::kw_signed:
   case tok::kw_unsigned:
   case tok::kw__Complex:
@@ -2887,6 +2945,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
     // type-specifiers
   case tok::kw_short:
   case tok::kw_long:
+  case tok::kw___int64:
   case tok::kw_signed:
   case tok::kw_unsigned:
   case tok::kw__Complex:
@@ -2924,9 +2983,6 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw_virtual:
   case tok::kw_explicit:
 
-    // typedef-name
-  case tok::annot_typename:
-
     // static_assert-declaration
   case tok::kw__Static_assert:
 
@@ -2941,6 +2997,11 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::less:
     return getLang().ObjC1;
 
+    // typedef-name
+  case tok::annot_typename:
+    return !DisambiguatingWithExpression ||
+           !isStartOfObjCClassMessageMissingOpenBracket();
+      
   case tok::kw___declspec:
   case tok::kw___cdecl:
   case tok::kw___stdcall:

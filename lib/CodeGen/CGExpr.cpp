@@ -235,8 +235,6 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
     // We have to load the lvalue.
     RV = CGF.EmitLoadOfLValue(LV, E->getType());
   } else {
-    QualType ResultTy = E->getType();
-
     llvm::SmallVector<SubobjectAdjustment, 2> Adjustments;
     while (true) {
       E = E->IgnoreParens();
@@ -726,9 +724,10 @@ RValue CodeGenFunction::EmitLoadOfBitfieldLValue(LValue LV,
       Ptr = Builder.CreateStructGEP(Ptr, AI.FieldIndex, "bf.field");
 
     // Offset by the byte offset, if used.
-    if (AI.FieldByteOffset) {
+    if (!AI.FieldByteOffset.isZero()) {
       Ptr = EmitCastToVoidPtr(Ptr);
-      Ptr = Builder.CreateConstGEP1_32(Ptr, AI.FieldByteOffset,"bf.field.offs");
+      Ptr = Builder.CreateConstGEP1_32(Ptr, AI.FieldByteOffset.getQuantity(),
+                                       "bf.field.offs");
     }
 
     // Cast to the access type.
@@ -739,8 +738,8 @@ RValue CodeGenFunction::EmitLoadOfBitfieldLValue(LValue LV,
 
     // Perform the load.
     llvm::LoadInst *Load = Builder.CreateLoad(Ptr, LV.isVolatileQualified());
-    if (AI.AccessAlignment)
-      Load->setAlignment(AI.AccessAlignment);
+    if (!AI.AccessAlignment.isZero())
+      Load->setAlignment(AI.AccessAlignment.getQuantity());
 
     // Shift out unused low bits and mask out unused high bits.
     llvm::Value *Val = Load;
@@ -929,9 +928,10 @@ void CodeGenFunction::EmitStoreThroughBitfieldLValue(RValue Src, LValue Dst,
       Ptr = Builder.CreateStructGEP(Ptr, AI.FieldIndex, "bf.field");
 
     // Offset by the byte offset, if used.
-    if (AI.FieldByteOffset) {
+    if (!AI.FieldByteOffset.isZero()) {
       Ptr = EmitCastToVoidPtr(Ptr);
-      Ptr = Builder.CreateConstGEP1_32(Ptr, AI.FieldByteOffset,"bf.field.offs");
+      Ptr = Builder.CreateConstGEP1_32(Ptr, AI.FieldByteOffset.getQuantity(),
+                                       "bf.field.offs");
     }
 
     // Cast to the access type.
@@ -962,8 +962,8 @@ void CodeGenFunction::EmitStoreThroughBitfieldLValue(RValue Src, LValue Dst,
     // If necessary, load and OR in bits that are outside of the bit-field.
     if (AI.TargetBitWidth != AI.AccessWidth) {
       llvm::LoadInst *Load = Builder.CreateLoad(Ptr, Dst.isVolatileQualified());
-      if (AI.AccessAlignment)
-        Load->setAlignment(AI.AccessAlignment);
+      if (!AI.AccessAlignment.isZero())
+        Load->setAlignment(AI.AccessAlignment.getQuantity());
 
       // Compute the mask for zeroing the bits that are part of the bit-field.
       llvm::APInt InvMask =
@@ -977,8 +977,8 @@ void CodeGenFunction::EmitStoreThroughBitfieldLValue(RValue Src, LValue Dst,
     // Write the value.
     llvm::StoreInst *Store = Builder.CreateStore(Val, Ptr,
                                                  Dst.isVolatileQualified());
-    if (AI.AccessAlignment)
-      Store->setAlignment(AI.AccessAlignment);
+    if (!AI.AccessAlignment.isZero())
+      Store->setAlignment(AI.AccessAlignment.getQuantity());
   }
 }
 
@@ -1390,7 +1390,7 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E) {
   // The index must always be an integer, which is not an aggregate.  Emit it.
   llvm::Value *Idx = EmitScalarExpr(E->getIdx());
   QualType IdxTy  = E->getIdx()->getType();
-  bool IdxSigned = IdxTy->isSignedIntegerType();
+  bool IdxSigned = IdxTy->isSignedIntegerOrEnumerationType();
 
   // If the base is a vector type, then we are forming a vector element lvalue
   // with this subscript.
@@ -1635,7 +1635,8 @@ LValue CodeGenFunction::EmitLValueForAnonRecordField(llvm::Value *BaseValue,
   IndirectFieldDecl::chain_iterator I = Field->chain_begin(),
     IEnd = Field->chain_end();
   while (true) {
-    LValue LV = EmitLValueForField(BaseValue, cast<FieldDecl>(*I), CVRQualifiers);
+    LValue LV = EmitLValueForField(BaseValue, cast<FieldDecl>(*I),
+                                   CVRQualifiers);
     if (++I == IEnd) return LV;
 
     assert(LV.isSimple());

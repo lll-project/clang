@@ -173,7 +173,7 @@ CFGBlockValues::CFGBlockValues(const CFG &c) : cfg(c), vals(0) {
   if (!n)
     return;
   vals = new std::pair<ValueVector*, ValueVector*>[n];
-  memset(vals, 0, sizeof(*vals) * n);
+  memset((void*)vals, 0, sizeof(*vals) * n);
 }
 
 CFGBlockValues::~CFGBlockValues() {
@@ -214,11 +214,15 @@ static BinaryOperator *getLogicalOperatorInChain(const CFGBlock *block) {
   if (!b || !b->isLogicalOp())
     return 0;
   
-  if (block->pred_size() == 2 &&
-      ((block->succ_size() == 2 && block->getTerminatorCondition() == b) ||
-       block->size() == 1))
-    return b;
-  
+  if (block->pred_size() == 2) {
+    if (block->getTerminatorCondition() == b) {
+      if (block->succ_size() == 2)
+      return b;
+    }
+    else if (block->size() == 1)
+      return b;
+  }
+
   return 0;
 }
 

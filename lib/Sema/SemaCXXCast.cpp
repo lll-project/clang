@@ -160,10 +160,6 @@ Sema::BuildCXXNamedCast(SourceLocation OpLoc, tok::TokenKind Kind,
   // FIXME: should we check this in a more fine-grained manner?
   bool TypeDependent = DestType->isDependentType() || Ex.get()->isTypeDependent();
 
-  if (Ex.get()->isBoundMemberFunction(Context))
-    Diag(Ex.get()->getLocStart(), diag::err_invalid_use_of_bound_member_func)
-      << Ex.get()->getSourceRange();
-
   ExprValueKind VK = VK_RValue;
   if (TypeDependent)
     VK = Expr::getValueKindForType(DestType);
@@ -305,6 +301,11 @@ static bool tryDiagnoseOverloadedCast(Sema &S, CastType CT,
 /// Diagnose a failed cast.
 static void diagnoseBadCast(Sema &S, unsigned msg, CastType castType,
                             SourceRange opRange, Expr *src, QualType destType) {
+  if (src->getType() == S.Context.BoundMemberTy) {
+    (void) S.CheckPlaceholderExpr(src); // will always fail
+    return;
+  }
+
   if (msg == diag::err_bad_cxx_cast_generic &&
       tryDiagnoseOverloadedCast(S, castType, opRange, src, destType))
     return;
@@ -1287,6 +1288,62 @@ static TryCastResult TryConstCast(Sema &Self, Expr *SrcExpr, QualType DestType,
   return TC_Success;
 }
 
+// Checks for undefined behavior in reinterpret_cast.
+// The cases that is checked for is:
+// *reinterpret_cast<T*>(&a)
+// reinterpret_cast<T&>(a)
+// where accessing 'a' as type 'T' will result in undefined behavior.
+void Sema::CheckCompatibleReinterpretCast(QualType SrcType, QualType DestType,
+                                          bool IsDereference,
+                                          SourceRange Range) {
+  unsigned DiagID = IsDereference ?
+                        diag::warn_pointer_indirection_from_incompatible_type :
+                        diag::warn_undefined_reinterpret_cast;
+
+  if (Diags.getDiagnosticLevel(DiagID, Range.getBegin()) ==
+          Diagnostic::Ignored) {
+    return;
+  }
+
+  QualType SrcTy, DestTy;
+  if (IsDereference) {
+    if (!SrcType->getAs<PointerType>() || !DestType->getAs<PointerType>()) {
+      return;
+    }
+    SrcTy = SrcType->getPointeeType();
+    DestTy = DestType->getPointeeType();
+  } else {
+    if (!DestType->getAs<ReferenceType>()) {
+      return;
+    }
+    SrcTy = SrcType;
+    DestTy = DestType->getPointeeType();
+  }
+
+  // Cast is compatible if the types are the same.
+  if (Context.hasSameUnqualifiedType(DestTy, SrcTy)) {
+    return;
+  }
+  // or one of the types is a char or void type
+  if (DestTy->isAnyCharacterType() || DestTy->isVoidType() ||
+      SrcTy->isAnyCharacterType() || SrcTy->isVoidType()) {
+    return;
+  }
+  // or one of the types is a tag type.
+  if (SrcTy->getAs<TagType>() || DestTy->getAs<TagType>()) {
+    return;
+  }
+
+  // FIXME: Scoped enums?
+  if ((SrcTy->isUnsignedIntegerType() && DestTy->isSignedIntegerType()) ||
+      (SrcTy->isSignedIntegerType() && DestTy->isUnsignedIntegerType())) {
+    if (Context.getTypeSize(DestTy) == Context.getTypeSize(SrcTy)) {
+      return;
+    }
+  }
+
+  Diag(Range.getBegin(), DiagID) << SrcType << DestType << Range;
+}
 
 static TryCastResult TryReinterpretCast(Sema &Self, ExprResult &SrcExpr,
                                         QualType DestType, bool CStyle,
@@ -1323,9 +1380,31 @@ static TryCastResult TryReinterpretCast(Sema &Self, ExprResult &SrcExpr,
       return TC_NotApplicable;
     }
 
+    if (!CStyle) {
+      Self.CheckCompatibleReinterpretCast(SrcType, DestType,
+                                          /*isDereference=*/false, OpRange);
+    }
+
     // C++ 5.2.10p10: [...] a reference cast reinterpret_cast<T&>(x) has the
     //   same effect as the conversion *reinterpret_cast<T*>(&x) with the
     //   built-in & and * operators.
+
+    const char *inappropriate = 0;
+    switch (SrcExpr.get()->getObjectKind()) {
+    case OK_Ordinary:
+      break;
+    case OK_BitField:        inappropriate = "bit-field";           break;
+    case OK_VectorComponent: inappropriate = "vector element";      break;
+    case OK_ObjCProperty:    inappropriate = "property expression"; break;
+    }
+    if (inappropriate) {
+      Self.Diag(OpRange.getBegin(), diag::err_bad_reinterpret_cast_reference)
+          << inappropriate << DestType
+          << OpRange << SrcExpr.get()->getSourceRange();
+      msg = 0; SrcExpr = ExprError();
+      return TC_NotApplicable;
+    }
+
     // This code does this transformation for the checked types.
     DestType = Self.Context.getPointerType(DestTypeTmp->getPointeeType());
     SrcType = Self.Context.getPointerType(SrcType);
@@ -1436,9 +1515,11 @@ static TryCastResult TryReinterpretCast(Sema &Self, ExprResult &SrcExpr,
   if (DestType->isIntegralType(Self.Context)) {
     assert(srcIsPtr && "One type must be a pointer");
     // C++ 5.2.10p4: A pointer can be explicitly converted to any integral
-    //   type large enough to hold it.
-    if (Self.Context.getTypeSize(SrcType) >
-        Self.Context.getTypeSize(DestType)) {
+    //   type large enough to hold it; except in Microsoft mode, where the
+    //   integral type size doesn't matter.
+    if ((Self.Context.getTypeSize(SrcType) >
+         Self.Context.getTypeSize(DestType)) &&
+         !Self.getLangOptions().Microsoft) {
       msg = diag::err_bad_reinterpret_cast_small_int;
       return TC_Failed;
     }
@@ -1523,12 +1604,6 @@ Sema::CXXCheckCStyleCast(SourceRange R, QualType CastTy, ExprValueKind &VK,
                          Expr *CastExpr, CastKind &Kind, 
                          CXXCastPath &BasePath,
                          bool FunctionalStyle) {
-  if (CastExpr->isBoundMemberFunction(Context)) {
-    Diag(CastExpr->getLocStart(), diag::err_invalid_use_of_bound_member_func)
-        << CastExpr->getSourceRange();
-    return ExprError();
-  }
-
   // This test is outside everything else because it's the only case where
   // a non-lvalue-reference target type does not lead to decay.
   // C++ 5.2.9p4: Any expression can be explicitly converted to type "cv void".
@@ -1539,6 +1614,9 @@ Sema::CXXCheckCStyleCast(SourceRange R, QualType CastTy, ExprValueKind &VK,
     if (CastExprRes.isInvalid())
       return ExprError();
     CastExpr = CastExprRes.take();
+
+    if (CastExpr->getType() == Context.BoundMemberTy)
+      return CheckPlaceholderExpr(CastExpr); // will always fail
 
     if (CastExpr->getType() == Context.OverloadTy) {
       ExprResult SingleFunctionExpr = 

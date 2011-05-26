@@ -174,7 +174,6 @@ static prec::Level getBinOpPrecedence(tok::TokenKind Kind,
 ///       expression: [C99 6.5.17]
 ///         assignment-expression ...[opt]
 ///         expression ',' assignment-expression ...[opt]
-///
 ExprResult Parser::ParseExpression() {
   ExprResult LHS(ParseAssignmentExpression());
   return ParseRHSOfBinaryExpression(move(LHS), prec::Comma);
@@ -212,7 +211,6 @@ Parser::ParseExpressionWithLeadingExtension(SourceLocation ExtLoc) {
 }
 
 /// ParseAssignmentExpression - Parse an expr that doesn't include commas.
-///
 ExprResult Parser::ParseAssignmentExpression() {
   if (Tok.is(tok::code_completion)) {
     Actions.CodeCompleteOrdinaryName(getCurScope(), Sema::PCC_Expression);
@@ -222,7 +220,7 @@ ExprResult Parser::ParseAssignmentExpression() {
   if (Tok.is(tok::kw_throw))
     return ParseThrowExpression();
 
-  ExprResult LHS(ParseCastExpression(false));
+  ExprResult LHS = ParseCastExpression(false, false, ParsedType());
   return ParseRHSOfBinaryExpression(move(LHS), prec::Assignment);
 }
 
@@ -415,8 +413,8 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
 /// due to member pointers.
 ///
 ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
-                                                     bool isAddressOfOperand,
-                                                     ParsedType TypeOfCast) {
+                                       bool isAddressOfOperand,
+                                       ParsedType TypeOfCast) {
   bool NotCastExpr;
   ExprResult Res = ParseCastExpression(isUnaryExpression,
                                        isAddressOfOperand,
@@ -492,6 +490,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 /// [C++]   'this'          [C++ 9.3.2]
 /// [G++]   unary-type-trait '(' type-id ')'
 /// [G++]   binary-type-trait '(' type-id ',' type-id ')'           [TODO]
+/// [EMBT]  array-type-trait '(' type-id ',' integer ')'
 /// [clang] '^' block-literal
 ///
 ///       constant: [C99 6.4.4]
@@ -521,6 +520,34 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 ///                   '::'[opt] 'delete' cast-expression
 ///                   '::'[opt] 'delete' '[' ']' cast-expression
 ///
+/// [GNU/Embarcadero] unary-type-trait:
+///                   '__is_arithmetic'
+///                   '__is_floating_point'
+///                   '__is_integral'
+///                   '__is_lvalue_expr'
+///                   '__is_rvalue_expr'
+///                   '__is_complete_type'
+///                   '__is_void'
+///                   '__is_array'
+///                   '__is_function'
+///                   '__is_reference'
+///                   '__is_lvalue_reference'
+///                   '__is_rvalue_reference'
+///                   '__is_fundamental'
+///                   '__is_object'
+///                   '__is_scalar'
+///                   '__is_compound'
+///                   '__is_pointer'
+///                   '__is_member_object_pointer'
+///                   '__is_member_function_pointer'
+///                   '__is_member_pointer'
+///                   '__is_const'
+///                   '__is_volatile'
+///                   '__is_trivial'
+///                   '__is_standard_layout'
+///                   '__is_signed'
+///                   '__is_unsigned'
+///
 /// [GNU] unary-type-trait:
 ///                   '__has_nothrow_assign'
 ///                   '__has_nothrow_copy'
@@ -536,11 +563,25 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 ///                   '__is_enum'
 ///                   '__is_pod'
 ///                   '__is_polymorphic'
+///                   '__is_trivial'
 ///                   '__is_union'
+///
+/// [Clang] unary-type-trait:
+///                   '__trivially_copyable'
 ///
 ///       binary-type-trait:
 /// [GNU]             '__is_base_of'       
 /// [MS]              '__is_convertible_to'
+///                   '__is_convertible'
+///                   '__is_same'
+///
+/// [Embarcadero] array-type-trait:
+///                   '__array_rank'
+///                   '__array_extent'
+///
+/// [Embarcadero] expression-trait:
+///                   '__is_lvalue_expr'
+///                   '__is_rvalue_expr'
 ///
 ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
                                        bool isAddressOfOperand,
@@ -611,6 +652,12 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_nullptr:
     return Actions.ActOnCXXNullPtrLiteral(ConsumeToken());
 
+  case tok::annot_primary_expr:
+    assert(Res.get() == 0 && "Stray primary-expression annotation?");
+    Res = getExprAnnotation(Tok);
+    ConsumeToken();
+    break;
+      
   case tok::identifier: {      // primary-expression: identifier
                                // unqualified-id: identifier
                                // constant: enumeration-constant
@@ -859,6 +906,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw_short:
   case tok::kw_int:
   case tok::kw_long:
+  case tok::kw___int64:
   case tok::kw_signed:
   case tok::kw_unsigned:
   case tok::kw_float:
@@ -983,14 +1031,40 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     return move(Result);
   }
 
-  case tok::kw___is_pod: // [GNU] unary-type-trait
+  case tok::kw___is_abstract: // [GNU] unary-type-trait
   case tok::kw___is_class:
-  case tok::kw___is_enum:
-  case tok::kw___is_union:
   case tok::kw___is_empty:
-  case tok::kw___is_polymorphic:
-  case tok::kw___is_abstract:
+  case tok::kw___is_enum:
   case tok::kw___is_literal:
+  case tok::kw___is_arithmetic:
+  case tok::kw___is_integral:
+  case tok::kw___is_floating_point:
+  case tok::kw___is_complete_type:
+  case tok::kw___is_void:
+  case tok::kw___is_array:
+  case tok::kw___is_function:
+  case tok::kw___is_reference:
+  case tok::kw___is_lvalue_reference:
+  case tok::kw___is_rvalue_reference:
+  case tok::kw___is_fundamental:
+  case tok::kw___is_object:
+  case tok::kw___is_scalar:
+  case tok::kw___is_compound:
+  case tok::kw___is_pointer:
+  case tok::kw___is_member_object_pointer:
+  case tok::kw___is_member_function_pointer:
+  case tok::kw___is_member_pointer:
+  case tok::kw___is_const:
+  case tok::kw___is_volatile:
+  case tok::kw___is_standard_layout:
+  case tok::kw___is_signed:
+  case tok::kw___is_unsigned:
+  case tok::kw___is_literal_type:
+  case tok::kw___is_pod:
+  case tok::kw___is_polymorphic:
+  case tok::kw___is_trivial:
+  case tok::kw___is_trivially_copyable:
+  case tok::kw___is_union:
   case tok::kw___has_trivial_constructor:
   case tok::kw___has_trivial_copy:
   case tok::kw___has_trivial_assign:
@@ -1003,9 +1077,19 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 
   case tok::kw___builtin_types_compatible_p:
   case tok::kw___is_base_of:
+  case tok::kw___is_same:
+  case tok::kw___is_convertible:
   case tok::kw___is_convertible_to:
     return ParseBinaryTypeTrait();
 
+  case tok::kw___array_rank:
+  case tok::kw___array_extent:
+    return ParseArrayTypeTrait();
+
+  case tok::kw___is_lvalue_expr:
+  case tok::kw___is_rvalue_expr:
+    return ParseExpressionTrait();
+      
   case tok::at: {
     SourceLocation AtLoc = ConsumeToken();
     return ParseObjCAtExpression(AtLoc);

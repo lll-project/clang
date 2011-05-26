@@ -64,6 +64,7 @@ namespace {
     // FIXME: DependentTypeOfExprType
     QualType VisitTypeOfType(const TypeOfType *T);
     QualType VisitDecltypeType(const DecltypeType *T);
+    QualType VisitUnaryTransformType(const UnaryTransformType *T);
     QualType VisitAutoType(const AutoType *T);
     // FIXME: DependentDecltypeType
     QualType VisitRecordType(const RecordType *T);
@@ -604,7 +605,14 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                   cast<TypeOfType>(T2)->getUnderlyingType()))
       return false;
     break;
-      
+
+  case Type::UnaryTransform:
+    if (!IsStructurallyEquivalent(Context,
+                             cast<UnaryTransformType>(T1)->getUnderlyingType(),
+                             cast<UnaryTransformType>(T1)->getUnderlyingType()))
+      return false;
+    break;
+
   case Type::Decltype:
     if (!IsStructurallyEquivalent(Context,
                                   cast<DecltypeType>(T1)->getUnderlyingExpr(),
@@ -1363,6 +1371,7 @@ QualType ASTNodeImporter::VisitBuiltinType(const BuiltinType *T) {
   case BuiltinType::Overload: return Importer.getToContext().OverloadTy;
   case BuiltinType::Dependent: return Importer.getToContext().DependentTy;
   case BuiltinType::UnknownAny: return Importer.getToContext().UnknownAnyTy;
+  case BuiltinType::BoundMember: return Importer.getToContext().BoundMemberTy;
 
   case BuiltinType::ObjCId:
     // FIXME: Make sure that the "to" context supports Objective-C!
@@ -1569,6 +1578,17 @@ QualType ASTNodeImporter::VisitDecltypeType(const DecltypeType *T) {
     return QualType();
   
   return Importer.getToContext().getDecltypeType(ToExpr);
+}
+
+QualType ASTNodeImporter::VisitUnaryTransformType(const UnaryTransformType *T) {
+  QualType ToBaseType = Importer.Import(T->getBaseType());
+  QualType ToUnderlyingType = Importer.Import(T->getUnderlyingType());
+  if (ToBaseType.isNull() || ToUnderlyingType.isNull())
+    return QualType();
+
+  return Importer.getToContext().getUnaryTransformType(ToBaseType,
+                                                       ToUnderlyingType,
+                                                       T->getUTTKind());
 }
 
 QualType ASTNodeImporter::VisitAutoType(const AutoType *T) {
@@ -3754,16 +3774,16 @@ Expr *ASTNodeImporter::VisitExpr(Expr *E) {
 }
 
 Expr *ASTNodeImporter::VisitDeclRefExpr(DeclRefExpr *E) {
-  NestedNameSpecifier *Qualifier = 0;
-  if (E->getQualifier()) {
-    Qualifier = Importer.Import(E->getQualifier());
-    if (!E->getQualifier())
-      return 0;
-  }
-  
   ValueDecl *ToD = cast_or_null<ValueDecl>(Importer.Import(E->getDecl()));
   if (!ToD)
     return 0;
+
+  NamedDecl *FoundD = 0;
+  if (E->getDecl() != E->getFoundDecl()) {
+    FoundD = cast_or_null<NamedDecl>(Importer.Import(E->getFoundDecl()));
+    if (!FoundD)
+      return 0;
+  }
   
   QualType T = Importer.Import(E->getType());
   if (T.isNull())
@@ -3774,6 +3794,7 @@ Expr *ASTNodeImporter::VisitDeclRefExpr(DeclRefExpr *E) {
                              ToD,
                              Importer.Import(E->getLocation()),
                              T, E->getValueKind(),
+                             FoundD,
                              /*FIXME:TemplateArgs=*/0);
 }
 
@@ -4076,7 +4097,46 @@ NestedNameSpecifier *ASTImporter::Import(NestedNameSpecifier *FromNNS) {
   if (!FromNNS)
     return 0;
 
-  // FIXME: Implement!
+  NestedNameSpecifier *prefix = Import(FromNNS->getPrefix());
+
+  switch (FromNNS->getKind()) {
+  case NestedNameSpecifier::Identifier:
+    if (IdentifierInfo *II = Import(FromNNS->getAsIdentifier())) {
+      return NestedNameSpecifier::Create(ToContext, prefix, II);
+    }
+    return 0;
+
+  case NestedNameSpecifier::Namespace:
+    if (NamespaceDecl *NS = 
+          cast<NamespaceDecl>(Import(FromNNS->getAsNamespace()))) {
+      return NestedNameSpecifier::Create(ToContext, prefix, NS);
+    }
+    return 0;
+
+  case NestedNameSpecifier::NamespaceAlias:
+    if (NamespaceAliasDecl *NSAD = 
+          cast<NamespaceAliasDecl>(Import(FromNNS->getAsNamespaceAlias()))) {
+      return NestedNameSpecifier::Create(ToContext, prefix, NSAD);
+    }
+    return 0;
+
+  case NestedNameSpecifier::Global:
+    return NestedNameSpecifier::GlobalSpecifier(ToContext);
+
+  case NestedNameSpecifier::TypeSpec:
+  case NestedNameSpecifier::TypeSpecWithTemplate: {
+      QualType T = Import(QualType(FromNNS->getAsType(), 0u));
+      if (!T.isNull()) {
+        bool bTemplate = FromNNS->getKind() == 
+                         NestedNameSpecifier::TypeSpecWithTemplate;
+        return NestedNameSpecifier::Create(ToContext, prefix, 
+                                           bTemplate, T.getTypePtr());
+      }
+    }
+    return 0;
+  }
+
+  llvm_unreachable("Invalid nested name specifier kind");
   return 0;
 }
 

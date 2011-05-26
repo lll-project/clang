@@ -1,5 +1,7 @@
 // RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,osx.coreFoundation.CFRetainRelease,osx.cocoa.ClassRelease -analyzer-store=basic -fblocks -verify %s
 // RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,osx.coreFoundation.CFRetainRelease,osx.cocoa.ClassRelease -analyzer-store=region -fblocks -verify %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,osx.coreFoundation.CFRetainRelease,osx.cocoa.ClassRelease -analyzer-store=basic -fblocks -verify -x objective-c++ %s
+// RUN: %clang_cc1 -triple x86_64-apple-darwin10 -analyze -analyzer-checker=core,osx.coreFoundation.CFRetainRelease,osx.cocoa.ClassRelease -analyzer-store=region -fblocks -verify -x objective-c++ %s
 
 #if __has_feature(attribute_ns_returns_retained)
 #define NS_RETURNS_RETAINED __attribute__((ns_returns_retained))
@@ -278,7 +280,7 @@ CFAbsoluteTime f1() {
   CFRelease(date);
   CFDateGetAbsoluteTime(date); // no-warning
   CFRelease(date);
-  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released.}}
+  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released}}
   return t;
 }
 
@@ -289,7 +291,7 @@ CFAbsoluteTime f2() {
   CFRelease(date);
   CFDateGetAbsoluteTime(date); // no-warning
   [((NSDate*) date) release];
-  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released.}}
+  t = CFDateGetAbsoluteTime(date);   // expected-warning{{Reference-counted object is used after it is released}}
   return t;
 }
 
@@ -341,7 +343,7 @@ CFDateRef f6(int x) {
 CFDateRef f7() {
   CFDateRef date = CFDateCreate(0, CFAbsoluteTimeGetCurrent());  //expected-warning{{leak}}
   CFRetain(date);
-  date = CFDateCreate(0, CFAbsoluteTimeGetCurrent());
+  date = CFDateCreate(0, CFAbsoluteTimeGetCurrent()); // expected-warning {{leak}}
   return date;
 }
 
@@ -355,8 +357,8 @@ CFDateRef f8() {
   return date;
 }
 
-CFDateRef f9() {
-  CFDateRef date = CFDateCreate(0, CFAbsoluteTimeGetCurrent());
+__attribute__((cf_returns_retained)) CFDateRef f9() {
+  CFDateRef date = CFDateCreate(0, CFAbsoluteTimeGetCurrent()); // no-warning
   int *p = 0;
   // When allocations fail, CFDateCreate can return null.
   if (!date) *p = 1; // expected-warning{{null}}
@@ -910,7 +912,7 @@ void IOServiceAddMatchingNotification_wrapper(IONotificationPortRef notifyPort, 
 // Test of handling objects whose references "escape" to containers.
 //===----------------------------------------------------------------------===//
 
-void CFDictionaryAddValue();
+void CFDictionaryAddValue(CFMutableDictionaryRef, void *, void *);
 
 // <rdar://problem/6539791>
 void rdar_6539791(CFMutableDictionaryRef y, void* key, void* val_key) {
@@ -920,9 +922,9 @@ void rdar_6539791(CFMutableDictionaryRef y, void* key, void* val_key) {
   signed z = 1;
   CFNumberRef value = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &z);
   if (value) {
-    CFDictionaryAddValue(x, val_key, value); // no-warning
+    CFDictionaryAddValue(x, val_key, (void*)value); // no-warning
     CFRelease(value);
-    CFDictionaryAddValue(y, val_key, value); // no-warning
+    CFDictionaryAddValue(y, val_key, (void*)value); // no-warning
   }
 }
 
@@ -1013,8 +1015,8 @@ typedef struct _opaque_pthread_attr_t __darwin_pthread_attr_t;
 typedef __darwin_pthread_t pthread_t;
 typedef __darwin_pthread_attr_t pthread_attr_t;
 
-int pthread_create(pthread_t * restrict, const pthread_attr_t * restrict,
-                   void *(*)(void *), void * restrict);
+int pthread_create(pthread_t *, const pthread_attr_t *,
+                   void *(*)(void *), void *);
 
 void *rdar_7299394_start_routine(void *p) {
   [((id) p) release];
@@ -1435,7 +1437,6 @@ extern const void *CFDictionaryGetValue(CFDictionaryRef theDict, const void *key
 typedef struct __CFError * CFErrorRef;
 extern const CFStringRef kCFErrorUnderlyingErrorKey;
 extern CFDictionaryRef CFErrorCopyUserInfo(CFErrorRef err);
-
 static void rdar_8724287(CFErrorRef error)
 {
     CFErrorRef error_to_dump;
@@ -1444,7 +1445,7 @@ static void rdar_8724287(CFErrorRef error)
     while (error_to_dump != ((void*)0)) {
         CFDictionaryRef info;
 
-        info = CFErrorCopyUserInfo(error_to_dump); // expected-warning{{Potential leak of an object allocated on line 1447 and stored into 'info'}}
+        info = CFErrorCopyUserInfo(error_to_dump); // expected-warning{{Potential leak of an object allocated on line 1448 and stored into 'info'}}
 
         if (info != ((void*)0)) {
         }

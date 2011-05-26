@@ -161,7 +161,12 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
         // Code completion for a nested-name-specifier, where the code
         // code completion token follows the '::'.
         Actions.CodeCompleteQualifiedId(getCurScope(), SS, EnteringContext);
-        ConsumeCodeCompletionToken();
+        SourceLocation ccLoc = ConsumeCodeCompletionToken();
+        // Include code completion token into the range of the scope otherwise
+        // when we try to annotate the scope tokens the dangling code completion
+        // token will cause assertion in
+        // Preprocessor::AnnotatePreviousCachedTokens.
+        SS.setEndLoc(ccLoc);
       }
     }
 
@@ -275,8 +280,11 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
                                       : TemplateId->TemplateNameLoc;
         SS.SetInvalid(SourceRange(StartLoc, CCLoc));
       }
-      
-      TemplateId->Destroy();
+
+      // If we are caching tokens we will process the TemplateId again,
+      // otherwise destroy it.
+      if (!PP.isBacktrackEnabled())
+        TemplateId->Destroy();
       continue;
     }
 
@@ -394,7 +402,7 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
         // before 'getAs' and treat this as a dependent template name.
         unsigned DiagID = diag::err_missing_dependent_template_keyword;
         if (getLang().Microsoft)
-          DiagID = diag::war_missing_dependent_template_keyword;
+          DiagID = diag::warn_missing_dependent_template_keyword;
         
         Diag(Tok.getLocation(), DiagID)
           << II.getName()
@@ -940,6 +948,7 @@ bool Parser::isCXXSimpleTypeSpecifier() const {
   case tok::annot_typename:
   case tok::kw_short:
   case tok::kw_long:
+  case tok::kw___int64:
   case tok::kw_signed:
   case tok::kw_unsigned:
   case tok::kw_void:
@@ -951,9 +960,9 @@ bool Parser::isCXXSimpleTypeSpecifier() const {
   case tok::kw_char16_t:
   case tok::kw_char32_t:
   case tok::kw_bool:
-    // FIXME: C++0x decltype support.
-  // GNU typeof support.
+  case tok::kw_decltype:
   case tok::kw_typeof:
+  case tok::kw___underlying_type:
     return true;
 
   default:
@@ -1031,6 +1040,9 @@ void Parser::ParseCXXSimpleTypeSpecifier(DeclSpec &DS) {
     break;
   case tok::kw_long:
     DS.SetTypeSpecWidth(DeclSpec::TSW_long, Loc, PrevSpec, DiagID);
+    break;
+  case tok::kw___int64:
+    DS.SetTypeSpecWidth(DeclSpec::TSW_longlong, Loc, PrevSpec, DiagID);
     break;
   case tok::kw_signed:
     DS.SetTypeSpecSign(DeclSpec::TSS_signed, Loc, PrevSpec, DiagID);
@@ -1908,23 +1920,50 @@ Parser::ParseCXXDeleteExpression(bool UseGlobal, SourceLocation Start) {
 
 static UnaryTypeTrait UnaryTypeTraitFromTokKind(tok::TokenKind kind) {
   switch(kind) {
-  default: llvm_unreachable("Not a known unary type trait");
+  default: assert(false && "Not a known unary type trait.");
   case tok::kw___has_nothrow_assign:      return UTT_HasNothrowAssign;
-  case tok::kw___has_nothrow_copy:        return UTT_HasNothrowCopy;
   case tok::kw___has_nothrow_constructor: return UTT_HasNothrowConstructor;
+  case tok::kw___has_nothrow_copy:           return UTT_HasNothrowCopy;
   case tok::kw___has_trivial_assign:      return UTT_HasTrivialAssign;
-  case tok::kw___has_trivial_copy:        return UTT_HasTrivialCopy;
-  case tok::kw___has_trivial_constructor: return UTT_HasTrivialConstructor;
+  case tok::kw___has_trivial_constructor:
+                                    return UTT_HasTrivialDefaultConstructor;
+  case tok::kw___has_trivial_copy:           return UTT_HasTrivialCopy;
   case tok::kw___has_trivial_destructor:  return UTT_HasTrivialDestructor;
   case tok::kw___has_virtual_destructor:  return UTT_HasVirtualDestructor;
   case tok::kw___is_abstract:             return UTT_IsAbstract;
+  case tok::kw___is_arithmetic:              return UTT_IsArithmetic;
+  case tok::kw___is_array:                   return UTT_IsArray;
   case tok::kw___is_class:                return UTT_IsClass;
+  case tok::kw___is_complete_type:           return UTT_IsCompleteType;
+  case tok::kw___is_compound:                return UTT_IsCompound;
+  case tok::kw___is_const:                   return UTT_IsConst;
   case tok::kw___is_empty:                return UTT_IsEmpty;
   case tok::kw___is_enum:                 return UTT_IsEnum;
-  case tok::kw___is_pod:                  return UTT_IsPOD;
-  case tok::kw___is_polymorphic:          return UTT_IsPolymorphic;
-  case tok::kw___is_union:                return UTT_IsUnion;
+  case tok::kw___is_floating_point:          return UTT_IsFloatingPoint;
+  case tok::kw___is_function:                return UTT_IsFunction;
+  case tok::kw___is_fundamental:             return UTT_IsFundamental;
+  case tok::kw___is_integral:                return UTT_IsIntegral;
+  case tok::kw___is_lvalue_reference:        return UTT_IsLvalueReference;
+  case tok::kw___is_member_function_pointer: return UTT_IsMemberFunctionPointer;
+  case tok::kw___is_member_object_pointer:   return UTT_IsMemberObjectPointer;
+  case tok::kw___is_member_pointer:          return UTT_IsMemberPointer;
+  case tok::kw___is_object:                  return UTT_IsObject;
   case tok::kw___is_literal:              return UTT_IsLiteral;
+  case tok::kw___is_literal_type:         return UTT_IsLiteral;
+  case tok::kw___is_pod:                  return UTT_IsPOD;
+  case tok::kw___is_pointer:                 return UTT_IsPointer;
+  case tok::kw___is_polymorphic:          return UTT_IsPolymorphic;
+  case tok::kw___is_reference:               return UTT_IsReference;
+  case tok::kw___is_rvalue_reference:        return UTT_IsRvalueReference;
+  case tok::kw___is_scalar:                  return UTT_IsScalar;
+  case tok::kw___is_signed:                  return UTT_IsSigned;
+  case tok::kw___is_standard_layout:         return UTT_IsStandardLayout;
+  case tok::kw___is_trivial:                 return UTT_IsTrivial;
+  case tok::kw___is_trivially_copyable:      return UTT_IsTriviallyCopyable;
+  case tok::kw___is_union:                return UTT_IsUnion;
+  case tok::kw___is_unsigned:                return UTT_IsUnsigned;
+  case tok::kw___is_void:                    return UTT_IsVoid;
+  case tok::kw___is_volatile:                return UTT_IsVolatile;
   }
 }
 
@@ -1932,8 +1971,26 @@ static BinaryTypeTrait BinaryTypeTraitFromTokKind(tok::TokenKind kind) {
   switch(kind) {
   default: llvm_unreachable("Not a known binary type trait");
   case tok::kw___is_base_of:                 return BTT_IsBaseOf;
+  case tok::kw___is_convertible:             return BTT_IsConvertible;
+  case tok::kw___is_same:                    return BTT_IsSame;
   case tok::kw___builtin_types_compatible_p: return BTT_TypeCompatible;
   case tok::kw___is_convertible_to:          return BTT_IsConvertibleTo;
+  }
+}
+
+static ArrayTypeTrait ArrayTypeTraitFromTokKind(tok::TokenKind kind) {
+  switch(kind) {
+  default: llvm_unreachable("Not a known binary type trait");
+  case tok::kw___array_rank:                 return ATT_ArrayRank;
+  case tok::kw___array_extent:               return ATT_ArrayExtent;
+  }
+}
+
+static ExpressionTrait ExpressionTraitFromTokKind(tok::TokenKind kind) {
+  switch(kind) {
+  default: assert(false && "Not a known unary expression trait.");
+  case tok::kw___is_lvalue_expr:             return ET_IsLValueExpr;
+  case tok::kw___is_rvalue_expr:             return ET_IsRValueExpr;
   }
 }
 
@@ -2001,6 +2058,72 @@ ExprResult Parser::ParseBinaryTypeTrait() {
 
   return Actions.ActOnBinaryTypeTrait(BTT, Loc, LhsTy.get(), RhsTy.get(), RParen);
 }
+
+/// ParseArrayTypeTrait - Parse the built-in array type-trait
+/// pseudo-functions.
+///
+///       primary-expression:
+/// [Embarcadero]     '__array_rank' '(' type-id ')'
+/// [Embarcadero]     '__array_extent' '(' type-id ',' expression ')'
+///
+ExprResult Parser::ParseArrayTypeTrait() {
+  ArrayTypeTrait ATT = ArrayTypeTraitFromTokKind(Tok.getKind());
+  SourceLocation Loc = ConsumeToken();
+
+  SourceLocation LParen = Tok.getLocation();
+  if (ExpectAndConsume(tok::l_paren, diag::err_expected_lparen))
+    return ExprError();
+
+  TypeResult Ty = ParseTypeName();
+  if (Ty.isInvalid()) {
+    SkipUntil(tok::comma);
+    SkipUntil(tok::r_paren);
+    return ExprError();
+  }
+
+  switch (ATT) {
+  case ATT_ArrayRank: {
+    SourceLocation RParen = MatchRHSPunctuation(tok::r_paren, LParen);
+    return Actions.ActOnArrayTypeTrait(ATT, Loc, Ty.get(), NULL, RParen);
+  }
+  case ATT_ArrayExtent: {
+    if (ExpectAndConsume(tok::comma, diag::err_expected_comma)) {
+      SkipUntil(tok::r_paren);
+      return ExprError();
+    }
+
+    ExprResult DimExpr = ParseExpression();
+    SourceLocation RParen = MatchRHSPunctuation(tok::r_paren, LParen);
+
+    return Actions.ActOnArrayTypeTrait(ATT, Loc, Ty.get(), DimExpr.get(), RParen);
+  }
+  default:
+    break;
+  }
+  return ExprError();
+}
+
+/// ParseExpressionTrait - Parse built-in expression-trait
+/// pseudo-functions like __is_lvalue_expr( xxx ).
+///
+///       primary-expression:
+/// [Embarcadero]     expression-trait '(' expression ')'
+///
+ExprResult Parser::ParseExpressionTrait() {
+  ExpressionTrait ET = ExpressionTraitFromTokKind(Tok.getKind());
+  SourceLocation Loc = ConsumeToken();
+
+  SourceLocation LParen = Tok.getLocation();
+  if (ExpectAndConsume(tok::l_paren, diag::err_expected_lparen))
+    return ExprError();
+
+  ExprResult Expr = ParseExpression();
+
+  SourceLocation RParen = MatchRHSPunctuation(tok::r_paren, LParen);
+
+  return Actions.ActOnExpressionTrait(ET, Loc, Expr.get(), RParen);
+}
+
 
 /// ParseCXXAmbiguousParenExpression - We have parsed the left paren of a
 /// parenthesized ambiguous type-id. This uses tentative parsing to disambiguate

@@ -52,6 +52,8 @@ public:
                                   /// Decl* various IR entities came from.  Only
                                   /// useful when running CodeGen as a
                                   /// subroutine.
+  unsigned EmitGcovArcs      : 1; /// Emit coverage data files, aka. GCDA.
+  unsigned EmitGcovNotes     : 1; /// Emit coverage "notes" files, aka GCNO.
   unsigned ForbidGuardVariables : 1; /// Issue errors if C++ guard variables
                                   /// are required
   unsigned FunctionSections  : 1; /// Set when -ffunction-sections is enabled
@@ -66,6 +68,7 @@ public:
                                   /// generated.
   unsigned MergeAllConstants : 1; /// Merge identical constants.
   unsigned NoCommon          : 1; /// Set when -fno-common or C++ is enabled.
+  unsigned NoDwarf2CFIAsm    : 1; /// Set when -fno-dwarf2-cfi-asm is enabled.
   unsigned NoImplicitFloat   : 1; /// Set when -mno-implicit-float is enabled.
   unsigned NoInfsFPMath      : 1; /// Assume FP arguments, results not +-Inf.
   unsigned NoNaNsFPMath      : 1; /// Assume FP arguments, results not NaN.
@@ -74,7 +77,7 @@ public:
   unsigned OmitLeafFramePointer : 1; /// Set when -momit-leaf-frame-pointer is
                                      /// enabled.
   unsigned OptimizationLevel : 3; /// The -O[0-4] option specified.
-  unsigned OptimizeSize      : 1; /// If -Os is specified.
+  unsigned OptimizeSize      : 2; /// If -Os (==1) or -Oz (==2) is specified.
   unsigned RelaxAll          : 1; /// Relax all machine code instructions.
   unsigned RelaxedAliasing   : 1; /// Set when -fno-strict-aliasing is enabled.
   unsigned SaveTempLabels    : 1; /// Save temporary labels.
@@ -91,6 +94,10 @@ public:
 
   /// The code model to use (-mcmodel).
   std::string CodeModel;
+
+  /// The filename with path we use for coverage files. The extension will be
+  /// replaced.
+  std::string CoverageFile;
 
   /// Enable additional debugging information.
   std::string DebugPass;
@@ -135,6 +142,8 @@ public:
     DisableLLVMOpts = 0;
     DisableRedZone = 0;
     EmitDeclMetadata = 0;
+    EmitGcovArcs = 0;
+    EmitGcovNotes = 0;
     ForbidGuardVariables = 0;
     FunctionSections = 0;
     HiddenWeakTemplateVTables = 0;
@@ -144,6 +153,7 @@ public:
     LessPreciseFPMAD = 0;
     MergeAllConstants = 1;
     NoCommon = 0;
+    NoDwarf2CFIAsm = 0;
     NoImplicitFloat = 0;
     NoInfsFPMath = 0;
     NoNaNsFPMath = 0;

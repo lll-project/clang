@@ -96,6 +96,9 @@ CXCursor cxcursor::MakeCXCursor(Stmt *S, Decl *Parent,
   case Stmt::CXXCatchStmtClass:
   case Stmt::CXXTryStmtClass:  
   case Stmt::CXXForRangeStmtClass:        
+  case Stmt::SEHTryStmtClass:
+  case Stmt::SEHExceptStmtClass:
+  case Stmt::SEHFinallyStmtClass:
     K = CXCursor_UnexposedStmt;
     break;
       
@@ -151,6 +154,8 @@ CXCursor cxcursor::MakeCXCursor(Stmt *S, Decl *Parent,
   case Stmt::UnresolvedLookupExprClass:   
   case Stmt::UnaryTypeTraitExprClass:     
   case Stmt::BinaryTypeTraitExprClass:     
+  case Stmt::ArrayTypeTraitExprClass:
+  case Stmt::ExpressionTraitExprClass:     
   case Stmt::DependentScopeDeclRefExprClass:  
   case Stmt::CXXBindTemporaryExprClass:   
   case Stmt::ExprWithCleanupsClass: 

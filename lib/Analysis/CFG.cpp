@@ -320,7 +320,6 @@ private:
                                        AddStmtChoice asc);
   CFGBlock *VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *C, 
                                         AddStmtChoice asc);
-  CFGBlock *VisitCXXMemberCallExpr(CXXMemberCallExpr *C, AddStmtChoice asc);
   CFGBlock *VisitCallExpr(CallExpr *C, AddStmtChoice asc);
   CFGBlock *VisitCaseStmt(CaseStmt *C);
   CFGBlock *VisitChooseExpr(ChooseExpr *C, AddStmtChoice asc);
@@ -444,7 +443,7 @@ private:
       return Result.Val.getInt().getBoolValue();
 
     if (Result.Val.isLValue()) {
-      Expr *e = Result.Val.getLValueBase();
+      const Expr *e = Result.Val.getLValueBase();
       const CharUnits &c = Result.Val.getLValueOffset();        
       if (!e && c.isZero())
         return false;        
@@ -868,6 +867,7 @@ tryAgain:
 
     case Stmt::CallExprClass:
     case Stmt::CXXOperatorCallExprClass:
+    case Stmt::CXXMemberCallExprClass:
       return VisitCallExpr(cast<CallExpr>(S), asc);
 
     case Stmt::CaseStmtClass:
@@ -902,9 +902,6 @@ tryAgain:
 
     case Stmt::CXXTemporaryObjectExprClass:
       return VisitCXXTemporaryObjectExpr(cast<CXXTemporaryObjectExpr>(S), asc);
-
-    case Stmt::CXXMemberCallExprClass:
-      return VisitCXXMemberCallExpr(cast<CXXMemberCallExpr>(S), asc);
 
     case Stmt::CXXThrowExprClass:
       return VisitCXXThrowExpr(cast<CXXThrowExpr>(S));
@@ -1153,11 +1150,18 @@ static bool CanThrow(Expr *E, ASTContext &Ctx) {
 }
 
 CFGBlock *CFGBuilder::VisitCallExpr(CallExpr *C, AddStmtChoice asc) {
-  // If this is a call to a no-return function, this stops the block here.
-  bool NoReturn = false;
-  if (getFunctionExtInfo(*C->getCallee()->getType()).getNoReturn()) {
-    NoReturn = true;
+  // Compute the callee type.
+  QualType calleeType = C->getCallee()->getType();
+  if (calleeType == Context->BoundMemberTy) {
+    QualType boundType = Expr::findBoundMemberType(C->getCallee());
+
+    // We should only get a null bound type if processing a dependent
+    // CFG.  Recover by assuming nothing.
+    if (!boundType.isNull()) calleeType = boundType;
   }
+
+  // If this is a call to a no-return function, this stops the block here.
+  bool NoReturn = getFunctionExtInfo(*calleeType).getNoReturn();
 
   bool AddEHEdge = false;
 
@@ -1314,6 +1318,12 @@ CFGBlock *CFGBuilder::VisitConditionalOperator(AbstractConditionalOperator *C,
 }
 
 CFGBlock *CFGBuilder::VisitDeclStmt(DeclStmt *DS) {
+  // Check if the Decl is for an __label__.  If so, elide it from the
+  // CFG entirely.
+  if (isa<LabelDecl>(*DS->decl_begin()))
+    return Block;
+  
+  // This case also handles static_asserts.
   if (DS->isSingleDecl())
     return VisitDeclSubExpr(DS);
 
@@ -1346,7 +1356,14 @@ CFGBlock *CFGBuilder::VisitDeclStmt(DeclStmt *DS) {
 /// DeclStmts and initializers in them.
 CFGBlock *CFGBuilder::VisitDeclSubExpr(DeclStmt* DS) {
   assert(DS->isSingleDecl() && "Can handle single declarations only.");
-
+  Decl *D = DS->getSingleDecl();
+ 
+  if (isa<StaticAssertDecl>(D)) {
+    // static_asserts aren't added to the CFG because they do not impact
+    // runtime semantics.
+    return Block;
+  }
+  
   VarDecl *VD = dyn_cast<VarDecl>(DS->getSingleDecl());
 
   if (!VD) {
@@ -2686,13 +2703,6 @@ CFGBlock *CFGBuilder::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *C,
   return VisitChildren(C);
 }
 
-CFGBlock *CFGBuilder::VisitCXXMemberCallExpr(CXXMemberCallExpr *C,
-                                             AddStmtChoice asc) {
-  autoCreateBlock();
-  appendStmt(Block, C);
-  return VisitChildren(C);
-}
-
 CFGBlock *CFGBuilder::VisitImplicitCastExpr(ImplicitCastExpr *E,
                                             AddStmtChoice asc) {
   if (asc.alwaysAdd(*this, E)) {
@@ -3649,32 +3659,6 @@ Stmt* CFGBlock::getTerminatorCondition() {
 
   return E ? E->IgnoreParens() : NULL;
 }
-
-bool CFGBlock::hasBinaryBranchTerminator() const {
-  const Stmt *Terminator = this->Terminator;
-  if (!Terminator)
-    return false;
-
-  Expr* E = NULL;
-
-  switch (Terminator->getStmtClass()) {
-    default:
-      return false;
-
-    case Stmt::ForStmtClass:
-    case Stmt::WhileStmtClass:
-    case Stmt::DoStmtClass:
-    case Stmt::IfStmtClass:
-    case Stmt::ChooseExprClass:
-    case Stmt::BinaryConditionalOperatorClass:
-    case Stmt::ConditionalOperatorClass:
-    case Stmt::BinaryOperatorClass:
-      return true;
-  }
-
-  return E ? E->IgnoreParens() : NULL;
-}
-
 
 //===----------------------------------------------------------------------===//
 // CFG Graphviz Visualization

@@ -42,6 +42,7 @@ public:
   bool wantsRegionChangeUpdate(const GRState *state) const;
 
   const GRState *checkRegionChanges(const GRState *state,
+                                    const StoreManager::InvalidatedSymbols *,
                                     const MemRegion * const *Begin,
                                     const MemRegion * const *End) const;
 
@@ -75,6 +76,11 @@ public:
   void evalStrncat(CheckerContext &C, const CallExpr *CE) const;
 
   void evalStrcmp(CheckerContext &C, const CallExpr *CE) const;
+  void evalStrncmp(CheckerContext &C, const CallExpr *CE) const;
+  void evalStrcasecmp(CheckerContext &C, const CallExpr *CE) const;
+  void evalStrncasecmp(CheckerContext &C, const CallExpr *CE) const;
+  void evalStrcmpCommon(CheckerContext &C, const CallExpr *CE,
+                        bool isBounded = false, bool ignoreCase = false) const;
 
   // Utility methods
   std::pair<const GRState*, const GRState*>
@@ -1013,8 +1019,15 @@ void CStringChecker::evalStrcpyCommon(CheckerContext &C, const CallExpr *CE,
     const Expr *lenExpr = CE->getArg(2);
     SVal lenVal = state->getSVal(lenExpr);
 
+    // Cast the length to a NonLoc SVal. If it is not a NonLoc then give up.
     NonLoc *strLengthNL = dyn_cast<NonLoc>(&strLength);
+    if (!strLengthNL)
+      return;
+
+    // Cast the max length to a NonLoc SVal. If it is not a NonLoc then give up.
     NonLoc *lenValNL = dyn_cast<NonLoc>(&lenVal);
+    if (!lenValNL)
+      return;
 
     QualType cmpTy = C.getSValBuilder().getContext().IntTy;
     const GRState *stateTrue, *stateFalse;
@@ -1103,7 +1116,28 @@ void CStringChecker::evalStrcpyCommon(CheckerContext &C, const CallExpr *CE,
 
 void CStringChecker::evalStrcmp(CheckerContext &C, const CallExpr *CE) const {
   //int strcmp(const char *restrict s1, const char *restrict s2);
+  evalStrcmpCommon(C, CE, /* isBounded = */ false, /* ignoreCase = */ false);
+}
 
+void CStringChecker::evalStrncmp(CheckerContext &C, const CallExpr *CE) const {
+  //int strncmp(const char *restrict s1, const char *restrict s2, size_t n);
+  evalStrcmpCommon(C, CE, /* isBounded = */ true, /* ignoreCase = */ false);
+}
+
+void CStringChecker::evalStrcasecmp(CheckerContext &C, 
+                                    const CallExpr *CE) const {
+  //int strcasecmp(const char *restrict s1, const char *restrict s2);
+  evalStrcmpCommon(C, CE, /* isBounded = */ false, /* ignoreCase = */ true);
+}
+
+void CStringChecker::evalStrncasecmp(CheckerContext &C, 
+                                     const CallExpr *CE) const {
+  //int strncasecmp(const char *restrict s1, const char *restrict s2, size_t n);
+  evalStrcmpCommon(C, CE, /* isBounded = */ true, /* ignoreCase = */ true);
+}
+
+void CStringChecker::evalStrcmpCommon(CheckerContext &C, const CallExpr *CE,
+                                      bool isBounded, bool ignoreCase) const {
   const GRState *state = C.getState();
 
   // Check that the first string is non-null
@@ -1142,8 +1176,31 @@ void CStringChecker::evalStrcmp(CheckerContext &C, const CallExpr *CE) const {
     return;
   llvm::StringRef s2StrRef = s2StrLiteral->getString();
 
-  // Compare string 1 to string 2 the same way strcmp() does.
-  int result = s1StrRef.compare(s2StrRef);
+  int result;
+  if (isBounded) {
+    // Get the max number of characters to compare.
+    const Expr *lenExpr = CE->getArg(2);
+    SVal lenVal = state->getSVal(lenExpr);
+
+    // Dynamically cast the length to a ConcreteInt. If it is not a ConcreteInt
+    // then give up, otherwise get the value and use it as the bounds.
+    nonloc::ConcreteInt *CI = dyn_cast<nonloc::ConcreteInt>(&lenVal);
+    if (!CI)
+      return;
+    llvm::APSInt lenInt(CI->getValue());
+
+    // Create substrings of each to compare the prefix.
+    s1StrRef = s1StrRef.substr(0, (size_t)lenInt.getLimitedValue());
+    s2StrRef = s2StrRef.substr(0, (size_t)lenInt.getLimitedValue());
+  }
+
+  if (ignoreCase) {
+    // Compare string 1 to string 2 the same way strcasecmp() does.
+    result = s1StrRef.compare_lower(s2StrRef);
+  } else {
+    // Compare string 1 to string 2 the same way strcmp() does.
+    result = s1StrRef.compare(s2StrRef);
+  }
   
   // Build the SVal of the comparison to bind the return value.
   SValBuilder &svalBuilder = C.getSValBuilder();
@@ -1184,13 +1241,16 @@ bool CStringChecker::evalCall(const CallExpr *CE, CheckerContext &C) const {
     .Cases("memcmp", "bcmp", &CStringChecker::evalMemcmp)
     .Cases("memmove", "__memmove_chk", &CStringChecker::evalMemmove)
     .Cases("strcpy", "__strcpy_chk", &CStringChecker::evalStrcpy)
-    .Cases("strncpy", "__strncpy_chk", &CStringChecker::evalStrncpy)
+    //.Cases("strncpy", "__strncpy_chk", &CStringChecker::evalStrncpy)
     .Cases("stpcpy", "__stpcpy_chk", &CStringChecker::evalStpcpy)
     .Cases("strcat", "__strcat_chk", &CStringChecker::evalStrcat)
     .Cases("strncat", "__strncat_chk", &CStringChecker::evalStrncat)
     .Case("strlen", &CStringChecker::evalstrLength)
     .Case("strnlen", &CStringChecker::evalstrnLength)
     .Case("strcmp", &CStringChecker::evalStrcmp)
+    .Case("strncmp", &CStringChecker::evalStrncmp)
+    .Case("strcasecmp", &CStringChecker::evalStrcasecmp)
+    .Case("strncasecmp", &CStringChecker::evalStrncasecmp)
     .Case("bcopy", &CStringChecker::evalBcopy)
     .Default(NULL);
 
@@ -1246,6 +1306,7 @@ bool CStringChecker::wantsRegionChangeUpdate(const GRState *state) const {
 
 const GRState *
 CStringChecker::checkRegionChanges(const GRState *state,
+                                   const StoreManager::InvalidatedSymbols *,
                                    const MemRegion * const *Begin,
                                    const MemRegion * const *End) const {
   CStringLength::EntryMap Entries = state->get<CStringLength>();

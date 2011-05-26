@@ -290,7 +290,7 @@ sub AddStatLine {
   print $Line . "\n";
 
   my $Regex = qr/(.*?)\ :\ (.*?)\ ->\ Total\ CFGBlocks:\ (\d+)\ \|\ Unreachable
-      \ CFGBlocks:\ (\d+)\ \|\ Aborted\ Block:\ (yes|no)\ \|\ Empty\ WorkList:
+      \ CFGBlocks:\ (\d+)\ \|\ Exhausted\ Block:\ (yes|no)\ \|\ Empty\ WorkList:
       \ (yes|no)/x;
 
   if ($Line !~ $Regex) {
@@ -1383,7 +1383,7 @@ if ($AnalyzeHeaders) {
   push @AnalysesToRun,"-analyzer-opt-analyze-headers";  
 }
 if ($AnalyzerStats) {
-  push @AnalysesToRun, '-analyzer-stats';
+  push @AnalysesToRun, '-analyzer-checker', 'debug.Stats';
 }
 if ($MaxLoop > 0) {
   push @AnalysesToRun, '-analyzer-max-loop ' . $MaxLoop;

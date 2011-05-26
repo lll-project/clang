@@ -104,6 +104,8 @@ def CXXDeleteExpr : DStmt<Expr>;
 def CXXPseudoDestructorExpr : DStmt<Expr>;
 def UnaryTypeTraitExpr : DStmt<Expr>;
 def BinaryTypeTraitExpr : DStmt<Expr>;
+def ArrayTypeTraitExpr : DStmt<Expr>;
+def ExpressionTraitExpr : DStmt<Expr>;
 def DependentScopeDeclRefExpr : DStmt<Expr>;
 def CXXConstructExpr : DStmt<Expr>;
 def CXXBindTemporaryExpr : DStmt<Expr>;
@@ -140,4 +142,7 @@ def OpaqueValueExpr : DStmt<Expr>;
 
 // Microsoft Extensions.
 def CXXUuidofExpr : DStmt<Expr>; 
+def SEHTryStmt : Stmt;
+def SEHExceptStmt : Stmt;
+def SEHFinallyStmt : Stmt;
 

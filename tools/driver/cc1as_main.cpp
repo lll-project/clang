@@ -172,6 +172,8 @@ void AssemblerInvocation::CreateFromArgs(AssemblerInvocation &Opts,
     }
   }
   Opts.LLVMArgs = Args->getAllArgValues(OPT_mllvm);
+  if (Args->hasArg(OPT_fatal_warnings))
+    Opts.LLVMArgs.push_back("-fatal-assembler-warnings");
   Opts.OutputPath = Args->getLastArgValue(OPT_o);
   if (Arg *A = Args->getLastArg(OPT_filetype)) {
     StringRef Name = A->getValue(*Args);
@@ -287,7 +289,8 @@ static bool ExecuteAssembler(AssemblerInvocation &Opts, Diagnostic &Diags) {
       TAB = TheTarget->createAsmBackend(Opts.Triple);
     }
     Str.reset(TheTarget->createAsmStreamer(Ctx, *Out, /*asmverbose*/true,
-                                           /*useLoc*/ true, IP, CE, TAB,
+                                           /*useLoc*/ true,
+                                           /*useCFI*/ true, IP, CE, TAB,
                                            Opts.ShowInst));
   } else if (Opts.OutputType == AssemblerInvocation::FT_Null) {
     Str.reset(createNullStreamer(Ctx));

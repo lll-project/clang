@@ -750,6 +750,11 @@ DEF_TRAVERSE_TYPE(DecltypeType, {
     TRY_TO(TraverseStmt(T->getUnderlyingExpr()));
   })
 
+DEF_TRAVERSE_TYPE(UnaryTransformType, {
+    TRY_TO(TraverseType(T->getBaseType()));
+    TRY_TO(TraverseType(T->getUnderlyingType()));
+    })
+
 DEF_TRAVERSE_TYPE(AutoType, {
     TRY_TO(TraverseType(T->getDeducedType()));
   })
@@ -966,6 +971,10 @@ DEF_TRAVERSE_TYPELOC(DecltypeType, {
     TRY_TO(TraverseStmt(TL.getTypePtr()->getUnderlyingExpr()));
   })
 
+DEF_TRAVERSE_TYPELOC(UnaryTransformType, {
+    TRY_TO(TraverseTypeLoc(TL.getUnderlyingTInfo()->getTypeLoc()));
+  })
+
 DEF_TRAVERSE_TYPELOC(AutoType, {
     TRY_TO(TraverseType(TL.getTypePtr()->getDeducedType()));
   })
@@ -1049,7 +1058,9 @@ bool RecursiveASTVisitor<Derived>::TraverseDeclContextHelper(DeclContext *DC) {
   for (DeclContext::decl_iterator Child = DC->decls_begin(),
            ChildEnd = DC->decls_end();
        Child != ChildEnd; ++Child) {
-    TRY_TO(TraverseDecl(*Child));
+    // BlockDecls are traversed through BlockExprs.
+    if (!isa<BlockDecl>(*Child))
+      TRY_TO(TraverseDecl(*Child));
   }
 
   return true;
@@ -1068,10 +1079,12 @@ bool RecursiveASTVisitor<Derived>::Traverse##DECL (DECL *D) {   \
 DEF_TRAVERSE_DECL(AccessSpecDecl, { })
 
 DEF_TRAVERSE_DECL(BlockDecl, {
-    // We don't traverse nodes in param_begin()/param_end(), as they
-    // appear in decls_begin()/decls_end() and thus are handled by the
-    // DEF_TRAVERSE_DECL macro already.
+    TRY_TO(TraverseTypeLoc(D->getSignatureAsWritten()->getTypeLoc()));
     TRY_TO(TraverseStmt(D->getBody()));
+    // This return statement makes sure the traversal of nodes in
+    // decls_begin()/decls_end() (done in the DEF_TRAVERSE_DECL macro)
+    // is skipped - don't remove it.
+    return true;
   })
 
 DEF_TRAVERSE_DECL(FileScopeAsmDecl, {
@@ -1362,6 +1375,11 @@ DEF_TRAVERSE_DECL(TypeAliasDecl, {
     // We shouldn't traverse D->getTypeForDecl(); it's a result of
     // declaring the type alias, not something that was written in the
     // source.
+  })
+
+DEF_TRAVERSE_DECL(TypeAliasTemplateDecl, {
+    TRY_TO(TraverseDecl(D->getTemplatedDecl()));
+    TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters()));
   })
 
 DEF_TRAVERSE_DECL(UnresolvedUsingTypenameDecl, {
@@ -1849,6 +1867,14 @@ DEF_TRAVERSE_STMT(BinaryTypeTraitExpr, {
     TRY_TO(TraverseTypeLoc(S->getRhsTypeSourceInfo()->getTypeLoc()));
   })
 
+DEF_TRAVERSE_STMT(ArrayTypeTraitExpr, {
+    TRY_TO(TraverseTypeLoc(S->getQueriedTypeSourceInfo()->getTypeLoc()));
+  })
+
+DEF_TRAVERSE_STMT(ExpressionTraitExpr, {
+    TRY_TO(TraverseStmt(S->getQueriedExpression()));
+  })
+
 DEF_TRAVERSE_STMT(VAArgExpr, {
     // The child-iterator will pick up the expression argument.
     TRY_TO(TraverseTypeLoc(S->getWrittenTypeInfo()->getTypeLoc()));
@@ -1875,7 +1901,10 @@ DEF_TRAVERSE_STMT(CXXMemberCallExpr, { })
 DEF_TRAVERSE_STMT(AddrLabelExpr, { })
 DEF_TRAVERSE_STMT(ArraySubscriptExpr, { })
 DEF_TRAVERSE_STMT(BlockDeclRefExpr, { })
-DEF_TRAVERSE_STMT(BlockExpr, { })
+DEF_TRAVERSE_STMT(BlockExpr, {
+  TRY_TO(TraverseDecl(S->getBlockDecl()));
+  return true; // no child statements to loop through.
+})
 DEF_TRAVERSE_STMT(ChooseExpr, { })
 DEF_TRAVERSE_STMT(CompoundLiteralExpr, { })
 DEF_TRAVERSE_STMT(CXXBindTemporaryExpr, { })
@@ -1924,6 +1953,10 @@ DEF_TRAVERSE_STMT(UnresolvedMemberExpr, {
                                               S->getNumTemplateArgs()));
   }
 })
+
+DEF_TRAVERSE_STMT(SEHTryStmt, {})
+DEF_TRAVERSE_STMT(SEHExceptStmt, {})
+DEF_TRAVERSE_STMT(SEHFinallyStmt,{})
 
 DEF_TRAVERSE_STMT(CXXOperatorCallExpr, { })
 DEF_TRAVERSE_STMT(OpaqueValueExpr, { })

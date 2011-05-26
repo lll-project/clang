@@ -221,11 +221,6 @@ private:
   void EmitDeclare(const VarDecl *decl, unsigned Tag, llvm::Value *AI,
                    unsigned ArgNo, CGBuilderTy &Builder);
 
-  /// EmitDeclare - Emit call to llvm.dbg.declare for a variable
-  /// declaration from an enclosing block.
-  void EmitDeclare(const VarDecl *decl, unsigned Tag, llvm::Value *AI,
-                   CGBuilderTy &Builder, const CGBlockInfo &blockInfo);
-
   // EmitTypeForVarWithBlocksAttr - Build up structure info for the byref.  
   // See BuildByRefType.
   llvm::DIType EmitTypeForVarWithBlocksAttr(const ValueDecl *VD, 
@@ -257,6 +252,10 @@ private:
   /// CreateMemberType - Create new member and increase Offset by FType's size.
   llvm::DIType CreateMemberType(llvm::DIFile Unit, QualType FType,
                                 llvm::StringRef Name, uint64_t *Offset);
+
+  /// getFunctionDeclaration - Return debug info descriptor to describe method
+  /// declaration for the given method definition.
+  llvm::DISubprogram getFunctionDeclaration(const Decl *D);
 
   /// getFunctionName - Get function name for the given FunctionDecl. If the
   /// name is constructred on demand (e.g. C++ destructor) then the name

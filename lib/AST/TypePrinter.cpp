@@ -94,6 +94,7 @@ void TypePrinter::print(const Type *T, Qualifiers Quals, std::string &buffer) {
     case Type::TypeOfExpr:
     case Type::TypeOf:
     case Type::Decltype:
+    case Type::UnaryTransform:
     case Type::Record:
     case Type::Enum:
     case Type::Elaborated:
@@ -512,6 +513,20 @@ void TypePrinter::printDecltype(const DecltypeType *T, std::string &S) {
   S = "decltype(" + s.str() + ")" + S;
 }
 
+void TypePrinter::printUnaryTransform(const UnaryTransformType *T,
+                                           std::string &S) {
+  if (!S.empty())
+    S = ' ' + S;
+  std::string Str;
+  print(T->getBaseType(), Str);
+
+  switch (T->getUTTKind()) {
+    case UnaryTransformType::EnumUnderlyingType:
+      S = "__underlying_type(" + Str + ")" + S;
+      break;
+  }
+}
+
 void TypePrinter::printAuto(const AutoType *T, std::string &S) { 
   // If the type has been deduced, do not print 'auto'.
   if (T->isDeduced()) {
@@ -652,12 +667,12 @@ void TypePrinter::printTemplateTypeParm(const TemplateTypeParmType *T,
                                         std::string &S) { 
   if (!S.empty())    // Prefix the basic type, e.g. 'parmname X'.
     S = ' ' + S;
-  
-  if (!T->getName())
+
+  if (IdentifierInfo *Id = T->getIdentifier())
+    S = Id->getName().str() + S;
+  else
     S = "type-parameter-" + llvm::utostr_32(T->getDepth()) + '-' +
         llvm::utostr_32(T->getIndex()) + S;
-  else
-    S = T->getName()->getName().str() + S;  
 }
 
 void TypePrinter::printSubstTemplateTypeParm(const SubstTemplateTypeParmType *T, 
@@ -963,7 +978,7 @@ TemplateSpecializationType::PrintTemplateArgumentList(
     SpecString += '<';
   
   for (unsigned Arg = 0; Arg < NumArgs; ++Arg) {
-    if (SpecString.size() > !SkipBrackets)
+    if (SpecString.size() > unsigned(!SkipBrackets))
       SpecString += ", ";
     
     // Print the argument into a string.

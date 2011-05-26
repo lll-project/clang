@@ -272,23 +272,27 @@ Decl *Sema::ActOnCompatiblityAlias(SourceLocation AtLoc,
   return AliasDecl;
 }
 
-void Sema::CheckForwardProtocolDeclarationForCircularDependency(
+bool Sema::CheckForwardProtocolDeclarationForCircularDependency(
   IdentifierInfo *PName,
   SourceLocation &Ploc, SourceLocation PrevLoc,
   const ObjCList<ObjCProtocolDecl> &PList) {
+  
+  bool res = false;
   for (ObjCList<ObjCProtocolDecl>::iterator I = PList.begin(),
        E = PList.end(); I != E; ++I) {
-
     if (ObjCProtocolDecl *PDecl = LookupProtocol((*I)->getIdentifier(),
                                                  Ploc)) {
       if (PDecl->getIdentifier() == PName) {
         Diag(Ploc, diag::err_protocol_has_circular_dependency);
         Diag(PrevLoc, diag::note_previous_definition);
+        res = true;
       }
-      CheckForwardProtocolDeclarationForCircularDependency(PName, Ploc,
-        PDecl->getLocation(), PDecl->getReferencedProtocols());
+      if (CheckForwardProtocolDeclarationForCircularDependency(PName, Ploc,
+            PDecl->getLocation(), PDecl->getReferencedProtocols()))
+        res = true;
     }
   }
+  return res;
 }
 
 Decl *
@@ -300,6 +304,7 @@ Sema::ActOnStartProtocolInterface(SourceLocation AtProtoInterfaceLoc,
                                   const SourceLocation *ProtoLocs,
                                   SourceLocation EndProtoLoc,
                                   AttributeList *AttrList) {
+  bool err = false;
   // FIXME: Deal with AttrList.
   assert(ProtocolName && "Missing protocol identifier");
   ObjCProtocolDecl *PDecl = LookupProtocol(ProtocolName, ProtocolLoc);
@@ -314,8 +319,8 @@ Sema::ActOnStartProtocolInterface(SourceLocation AtProtoInterfaceLoc,
     }
     ObjCList<ObjCProtocolDecl> PList;
     PList.set((ObjCProtocolDecl *const*)ProtoRefs, NumProtoRefs, Context);
-    CheckForwardProtocolDeclarationForCircularDependency(
-      ProtocolName, ProtocolLoc, PDecl->getLocation(), PList);
+    err = CheckForwardProtocolDeclarationForCircularDependency(
+            ProtocolName, ProtocolLoc, PDecl->getLocation(), PList);
 
     // Make sure the cached decl gets a valid start location.
     PDecl->setLocation(AtProtoInterfaceLoc);
@@ -331,7 +336,7 @@ Sema::ActOnStartProtocolInterface(SourceLocation AtProtoInterfaceLoc,
   }
   if (AttrList)
     ProcessDeclAttributeList(TUScope, PDecl, AttrList);
-  if (NumProtoRefs) {
+  if (!err && NumProtoRefs ) {
     /// Check then save referenced protocols.
     PDecl->setProtocolList((ObjCProtocolDecl**)ProtoRefs, NumProtoRefs,
                            ProtoLocs, Context);
@@ -1536,7 +1541,7 @@ void Sema::ActOnAtEnd(Scope *S, SourceRange AtEnd,
     SourceLocation L = ClassDecl->getLocation();
     AtEnd.setBegin(L);
     AtEnd.setEnd(L);
-    Diag(L, diag::warn_missing_atend);
+    Diag(L, diag::err_missing_atend);
   }
   
   // FIXME: Remove these and use the ObjCContainerDecl/DeclContext.
@@ -1698,21 +1703,7 @@ void Sema::ActOnAtEnd(Scope *S, SourceRange AtEnd,
 /// objective-c's type qualifier from the parser version of the same info.
 static Decl::ObjCDeclQualifier
 CvtQTToAstBitMask(ObjCDeclSpec::ObjCDeclQualifier PQTVal) {
-  Decl::ObjCDeclQualifier ret = Decl::OBJC_TQ_None;
-  if (PQTVal & ObjCDeclSpec::DQ_In)
-    ret = (Decl::ObjCDeclQualifier)(ret | Decl::OBJC_TQ_In);
-  if (PQTVal & ObjCDeclSpec::DQ_Inout)
-    ret = (Decl::ObjCDeclQualifier)(ret | Decl::OBJC_TQ_Inout);
-  if (PQTVal & ObjCDeclSpec::DQ_Out)
-    ret = (Decl::ObjCDeclQualifier)(ret | Decl::OBJC_TQ_Out);
-  if (PQTVal & ObjCDeclSpec::DQ_Bycopy)
-    ret = (Decl::ObjCDeclQualifier)(ret | Decl::OBJC_TQ_Bycopy);
-  if (PQTVal & ObjCDeclSpec::DQ_Byref)
-    ret = (Decl::ObjCDeclQualifier)(ret | Decl::OBJC_TQ_Byref);
-  if (PQTVal & ObjCDeclSpec::DQ_Oneway)
-    ret = (Decl::ObjCDeclQualifier)(ret | Decl::OBJC_TQ_Oneway);
-
-  return ret;
+  return (Decl::ObjCDeclQualifier) (unsigned) PQTVal;
 }
 
 static inline
@@ -1803,17 +1794,11 @@ Decl *Sema::ActOnMethodDeclaration(
       ? DI->getTypeLoc().getBeginLoc()
       : ArgInfo[i].NameLoc;
 
-    ParmVarDecl* Param
-      = ParmVarDecl::Create(Context, ObjCMethod,
-                            StartLoc, ArgInfo[i].NameLoc, ArgInfo[i].Name,
-                            ArgType, DI, SC_None, SC_None, 0);
+    ParmVarDecl* Param = CheckParameter(ObjCMethod, StartLoc,
+                                        ArgInfo[i].NameLoc, ArgInfo[i].Name,
+                                        ArgType, DI, SC_None, SC_None);
 
-    if (ArgType->isObjCObjectType()) {
-      Diag(ArgInfo[i].NameLoc,
-           diag::err_object_cannot_be_passed_returned_by_value)
-        << 1 << ArgType;
-      Param->setInvalidDecl();
-    }
+    Param->setObjCMethodScopeInfo(i);
 
     Param->setObjCDeclQualifier(
       CvtQTToAstBitMask(ArgInfo[i].DeclSpec.getObjCDeclQualifier()));

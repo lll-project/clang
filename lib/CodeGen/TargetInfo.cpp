@@ -648,7 +648,7 @@ ABIArgInfo X86_32ABIInfo::getIndirectResult(QualType Ty, bool ByVal) const {
   unsigned TypeAlign = getContext().getTypeAlign(Ty) / 8;
   unsigned StackAlign = getTypeStackAlignInBytes(Ty, TypeAlign);
   if (StackAlign == 0)
-    return ABIArgInfo::getIndirect(0);
+    return ABIArgInfo::getIndirect(4);
 
   // If the stack alignment is less than the type alignment, realign the
   // argument.
@@ -1315,13 +1315,10 @@ ABIArgInfo X86_64ABIInfo::getIndirectResult(QualType Ty) const {
   if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
     return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
-  // Compute the byval alignment. We trust the back-end to honor the
-  // minimum ABI alignment for byval, to make cleaner IR.
-  const unsigned MinABIAlign = 8;
-  unsigned Align = getContext().getTypeAlign(Ty) / 8;
-  if (Align > MinABIAlign)
-    return ABIArgInfo::getIndirect(Align);
-  return ABIArgInfo::getIndirect(0);
+  // Compute the byval alignment. We specify the alignment of the byval in all
+  // cases so that the mid-level optimizer knows the alignment of the byval.
+  unsigned Align = std::max(getContext().getTypeAlign(Ty) / 8, 8U);
+  return ABIArgInfo::getIndirect(Align);
 }
 
 /// Get16ByteVectorType - The ABI specifies that a value should be passed in an
@@ -2279,6 +2276,22 @@ public:
   int getDwarfEHStackPointer(CodeGen::CodeGenModule &M) const {
     return 13;
   }
+
+  bool initDwarfEHRegSizeTable(CodeGen::CodeGenFunction &CGF,
+                               llvm::Value *Address) const {
+    CodeGen::CGBuilderTy &Builder = CGF.Builder;
+    llvm::LLVMContext &Context = CGF.getLLVMContext();
+
+    const llvm::IntegerType *i8 = llvm::Type::getInt8Ty(Context);
+    llvm::Value *Four8 = llvm::ConstantInt::get(i8, 4);
+
+    // 0-15 are the 16 integer registers.
+    AssignToArrayRange(Builder, Address, Four8, 0, 15);
+
+    return false;
+  }
+
+
 };
 
 }
@@ -2341,22 +2354,26 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty) const {
 
   // Otherwise, pass by coercing to a structure of the appropriate size.
   //
-  // FIXME: This is kind of nasty... but there isn't much choice because the ARM
-  // backend doesn't support byval.
   // FIXME: This doesn't handle alignment > 64 bits.
   const llvm::Type* ElemTy;
   unsigned SizeRegs;
-  if (getContext().getTypeAlign(Ty) > 32) {
-    ElemTy = llvm::Type::getInt64Ty(getVMContext());
-    SizeRegs = (getContext().getTypeSize(Ty) + 63) / 64;
-  } else {
+  if (getContext().getTypeSizeInChars(Ty) <= CharUnits::fromQuantity(64)) {
     ElemTy = llvm::Type::getInt32Ty(getVMContext());
     SizeRegs = (getContext().getTypeSize(Ty) + 31) / 32;
+  } else if (getABIKind() == ARMABIInfo::APCS) {
+    // Initial ARM ByVal support is APCS-only.
+    return ABIArgInfo::getIndirect(0, /*ByVal=*/true);
+  } else {
+    // FIXME: This is kind of nasty... but there isn't much choice
+    // because most of the ARM calling conventions don't yet support
+    // byval.
+    ElemTy = llvm::Type::getInt64Ty(getVMContext());
+    SizeRegs = (getContext().getTypeSize(Ty) + 63) / 64;
   }
-  std::vector<const llvm::Type*> LLVMFields;
-  LLVMFields.push_back(llvm::ArrayType::get(ElemTy, SizeRegs));
-  const llvm::Type* STy = llvm::StructType::get(getVMContext(), LLVMFields,
-                                                true);
+
+  const llvm::Type *STy =
+    llvm::StructType::get(getVMContext(),
+                          llvm::ArrayType::get(ElemTy, SizeRegs), NULL, NULL);
   return ABIArgInfo::getDirect(STy);
 }
 
@@ -2537,6 +2554,74 @@ llvm::Value *ARMABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   Builder.CreateStore(NextAddr, VAListAddrAsBPP);
 
   return AddrTyped;
+}
+
+//===----------------------------------------------------------------------===//
+// PTX ABI Implementation
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+class PTXABIInfo : public ABIInfo {
+public:
+  PTXABIInfo(CodeGenTypes &CGT) : ABIInfo(CGT) {}
+
+  ABIArgInfo classifyReturnType(QualType RetTy) const;
+  ABIArgInfo classifyArgumentType(QualType Ty) const;
+
+  virtual void computeInfo(CGFunctionInfo &FI) const;
+  virtual llvm::Value *EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                 CodeGenFunction &CFG) const;
+};
+
+class PTXTargetCodeGenInfo : public TargetCodeGenInfo {
+public:
+  PTXTargetCodeGenInfo(CodeGenTypes &CGT)
+    : TargetCodeGenInfo(new PTXABIInfo(CGT)) {}
+};
+
+ABIArgInfo PTXABIInfo::classifyReturnType(QualType RetTy) const {
+  if (RetTy->isVoidType())
+    return ABIArgInfo::getIgnore();
+  if (isAggregateTypeForABI(RetTy))
+    return ABIArgInfo::getIndirect(0);
+  return ABIArgInfo::getDirect();
+}
+
+ABIArgInfo PTXABIInfo::classifyArgumentType(QualType Ty) const {
+  if (isAggregateTypeForABI(Ty))
+    return ABIArgInfo::getIndirect(0);
+
+  return ABIArgInfo::getDirect();
+}
+
+void PTXABIInfo::computeInfo(CGFunctionInfo &FI) const {
+  FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
+  for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
+       it != ie; ++it)
+    it->info = classifyArgumentType(it->type);
+
+  // Always honor user-specified calling convention.
+  if (FI.getCallingConvention() != llvm::CallingConv::C)
+    return;
+
+  // Calling convention as default by an ABI.
+  llvm::CallingConv::ID DefaultCC;
+  llvm::StringRef Env = getContext().Target.getTriple().getEnvironmentName();
+  if (Env == "device")
+    DefaultCC = llvm::CallingConv::PTX_Device;
+  else
+    DefaultCC = llvm::CallingConv::PTX_Kernel;
+
+  FI.setEffectiveCallingConvention(DefaultCC);
+}
+
+llvm::Value *PTXABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
+                                   CodeGenFunction &CFG) const {
+  llvm_unreachable("PTX does not support varargs");
+  return 0;
+}
+
 }
 
 //===----------------------------------------------------------------------===//
@@ -2852,6 +2937,10 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
 
   case llvm::Triple::ppc:
     return *(TheTargetCodeGenInfo = new PPC32TargetCodeGenInfo(Types));
+
+  case llvm::Triple::ptx32:
+  case llvm::Triple::ptx64:
+    return *(TheTargetCodeGenInfo = new PTXTargetCodeGenInfo(Types));
 
   case llvm::Triple::systemz:
     return *(TheTargetCodeGenInfo = new SystemZTargetCodeGenInfo(Types));

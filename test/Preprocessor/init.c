@@ -11,7 +11,6 @@
 // 
 // RUN: %clang_cc1 -x c++ -std=c++0x -E -dM < /dev/null | FileCheck -check-prefix CXX0X %s
 //
-// CXX0X:#define __DEPRECATED 1
 // CXX0X:#define __GNUG__
 // CXX0X:#define __GXX_EXPERIMENTAL_CXX0X__ 1
 // CXX0X:#define __GXX_RTTI 1
@@ -22,12 +21,16 @@
 // 
 // RUN: %clang_cc1 -x c++ -std=c++98 -E -dM < /dev/null | FileCheck -check-prefix CXX98 %s
 // 
-// CXX98:#define __DEPRECATED 1
 // CXX98:#define __GNUG__
 // CXX98:#define __GXX_RTTI 1
 // CXX98:#define __GXX_WEAK__ 1
 // CXX98:#define __cplusplus 199711L
 // CXX98:#define __private_extern__ extern
+//
+// 
+// RUN: %clang_cc1 -fdeprecated-macro -E -dM < /dev/null | FileCheck -check-prefix DEPRECATED %s
+//
+// DEPRECATED:#define __DEPRECATED 1
 //
 // 
 // RUN: %clang_cc1 -std=c99 -E -dM < /dev/null | FileCheck -check-prefix C99 %s
@@ -61,7 +64,6 @@
 // 
 // RUN: %clang_cc1 -x c++ -std=gnu++98 -E -dM < /dev/null | FileCheck -check-prefix GXX98 %s
 //
-// GXX98:#define __DEPRECATED 1
 // GXX98:#define __GNUG__
 // GXX98:#define __GXX_WEAK__ 1
 // GXX98:#define __cplusplus 1
@@ -77,10 +79,6 @@
 //
 // MSEXT-NOT:#define __STDC__
 // MSEXT:#define _INTEGRAL_MAX_BITS 64
-// MSEXT:#define __int16 __INT16_TYPE__
-// MSEXT:#define __int32 __INT32_TYPE__
-// MSEXT:#define __int64 __INT64_TYPE__
-// MSEXT:#define __int8 __INT8_TYPE__
 //
 // 
 // RUN: %clang_cc1 -x objective-c -E -dM < /dev/null | FileCheck -check-prefix OBJC %s

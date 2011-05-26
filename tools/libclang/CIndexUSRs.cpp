@@ -470,6 +470,15 @@ bool USRGenerator::GenLoc(const Decl *D) {
   if (generatedLoc)
     return IgnoreResults;
   generatedLoc = true;
+  
+  // Guard against null declarations in invalid code.
+  if (!D) {
+    IgnoreResults = true;
+    return true;
+  }
+
+  // Use the location of canonical decl.
+  D = D->getCanonicalDecl();
 
   const SourceManager &SM = AU->getSourceManager();
   SourceLocation L = D->getLocStart();
@@ -570,6 +579,7 @@ void USRGenerator::VisitType(QualType T) {
         case BuiltinType::NullPtr:
           c = 'n'; break;
         case BuiltinType::Overload:
+        case BuiltinType::BoundMember:
         case BuiltinType::Dependent:
         case BuiltinType::UnknownAny:
           IgnoreResults = true;

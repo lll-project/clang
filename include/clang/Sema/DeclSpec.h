@@ -249,6 +249,7 @@ public:
   static const TST TST_typeofType = clang::TST_typeofType;
   static const TST TST_typeofExpr = clang::TST_typeofExpr;
   static const TST TST_decltype = clang::TST_decltype;
+  static const TST TST_underlyingType = clang::TST_underlyingType;
   static const TST TST_auto = clang::TST_auto;
   static const TST TST_unknown_anytype = clang::TST_unknown_anytype;
   static const TST TST_error = clang::TST_error;
@@ -344,7 +345,8 @@ private:
   void SaveStorageSpecifierAsWritten();
 
   static bool isTypeRep(TST T) {
-    return (T == TST_typename || T == TST_typeofType);
+    return (T == TST_typename || T == TST_typeofType ||
+            T == TST_underlyingType);
   }
   static bool isExprRep(TST T) {
     return (T == TST_typeofExpr || T == TST_decltype);
@@ -461,6 +463,14 @@ public:
   SourceLocation getConstSpecLoc() const { return TQ_constLoc; }
   SourceLocation getRestrictSpecLoc() const { return TQ_restrictLoc; }
   SourceLocation getVolatileSpecLoc() const { return TQ_volatileLoc; }
+
+  /// \brief Clear out all of the type qualifiers.
+  void ClearTypeQualifiers() {
+    TypeQualifiers = 0;
+    TQ_constLoc = SourceLocation();
+    TQ_restrictLoc = SourceLocation();
+    TQ_volatileLoc = SourceLocation();
+  }
 
   // function-specifier
   bool isInlineSpecified() const { return FS_inline_specified; }
@@ -652,7 +662,12 @@ public:
 /// "declaration specifiers" specific to objective-c
 class ObjCDeclSpec {
 public:
-  /// ObjCDeclQualifier - Qualifier used on types in method declarations
+  /// ObjCDeclQualifier - Qualifier used on types in method
+  /// declarations.  Not all combinations are sensible.  Parameters
+  /// can be one of { in, out, inout } with one of { bycopy, byref }.
+  /// Returns can either be { oneway } or not.
+  ///
+  /// This should be kept in sync with Decl::ObjCDeclQualifier.
   enum ObjCDeclQualifier {
     DQ_None = 0x0,
     DQ_In = 0x1,
@@ -664,7 +679,8 @@ public:
   };
 
   /// PropertyAttributeKind - list of property attributes.
-  enum ObjCPropertyAttributeKind { DQ_PR_noattr = 0x0,
+  enum ObjCPropertyAttributeKind {
+    DQ_PR_noattr = 0x0,
     DQ_PR_readonly = 0x01,
     DQ_PR_getter = 0x02,
     DQ_PR_assign = 0x04,
@@ -1326,7 +1342,8 @@ public:
     CXXCatchContext,     // C++ catch exception-declaration
     BlockLiteralContext,  // Block literal declarator.
     TemplateTypeArgContext, // Template type argument.
-    AliasDeclContext     // C++0x alias-declaration.
+    AliasDeclContext,    // C++0x alias-declaration.
+    AliasTemplateContext // C++0x alias-declaration template.
   };
 
 private:
@@ -1468,6 +1485,7 @@ public:
 
     case TypeNameContext:
     case AliasDeclContext:
+    case AliasTemplateContext:
     case PrototypeContext:
     case ObjCPrototypeContext:
     case TemplateParamContext:
@@ -1497,6 +1515,7 @@ public:
 
     case TypeNameContext:
     case AliasDeclContext:
+    case AliasTemplateContext:
     case ObjCPrototypeContext:
     case BlockLiteralContext:
     case TemplateTypeArgContext:
@@ -1525,6 +1544,7 @@ public:
     case CXXCatchContext:
     case TypeNameContext:
     case AliasDeclContext:
+    case AliasTemplateContext:
     case BlockLiteralContext:
     case TemplateTypeArgContext:
       return false;

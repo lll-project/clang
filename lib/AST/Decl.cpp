@@ -1116,7 +1116,7 @@ void VarDecl::setStorageClass(StorageClass SC) {
   if (getStorageClass() != SC)
     ClearLinkageCache();
   
-  SClass = SC;
+  VarDeclBits.SClass = SC;
 }
 
 SourceRange VarDecl::getSourceRange() const {
@@ -1413,8 +1413,33 @@ bool FunctionDecl::isVariadic() const {
 
 bool FunctionDecl::hasBody(const FunctionDecl *&Definition) const {
   for (redecl_iterator I = redecls_begin(), E = redecls_end(); I != E; ++I) {
-    if (I->Body) {
+    if (I->Body || I->IsLateTemplateParsed) {
       Definition = *I;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool FunctionDecl::hasTrivialBody() const
+{
+  Stmt *S = getBody();
+  if (!S) {
+    // Since we don't have a body for this function, we don't know if it's
+    // trivial or not.
+    return false;
+  }
+
+  if (isa<CompoundStmt>(S) && cast<CompoundStmt>(S)->body_empty())
+    return true;
+  return false;
+}
+
+bool FunctionDecl::isDefined(const FunctionDecl *&Definition) const {
+  for (redecl_iterator I = redecls_begin(), E = redecls_end(); I != E; ++I) {
+    if (I->IsDeleted || I->IsDefaulted || I->Body || I->IsLateTemplateParsed) {
+      Definition = I->IsDeleted ? I->getCanonicalDecl() : *I;
       return true;
     }
   }
@@ -1427,6 +1452,9 @@ Stmt *FunctionDecl::getBody(const FunctionDecl *&Definition) const {
     if (I->Body) {
       Definition = *I;
       return I->Body.get(getASTContext().getExternalSource());
+    } else if (I->IsLateTemplateParsed) {
+      Definition = *I;
+      return 0;
     }
   }
 
@@ -1447,10 +1475,34 @@ void FunctionDecl::setPure(bool P) {
 }
 
 bool FunctionDecl::isMain() const {
-  ASTContext &Context = getASTContext();
-  return !Context.getLangOptions().Freestanding &&
-    getDeclContext()->getRedeclContext()->isTranslationUnit() &&
-    getIdentifier() && getIdentifier()->isStr("main");
+  const TranslationUnitDecl *tunit =
+    dyn_cast<TranslationUnitDecl>(getDeclContext()->getRedeclContext());
+  return tunit &&
+         !tunit->getASTContext().getLangOptions().Freestanding &&
+         getIdentifier() &&
+         getIdentifier()->isStr("main");
+}
+
+bool FunctionDecl::isReservedGlobalPlacementOperator() const {
+  assert(getDeclName().getNameKind() == DeclarationName::CXXOperatorName);
+  assert(getDeclName().getCXXOverloadedOperator() == OO_New ||
+         getDeclName().getCXXOverloadedOperator() == OO_Delete ||
+         getDeclName().getCXXOverloadedOperator() == OO_Array_New ||
+         getDeclName().getCXXOverloadedOperator() == OO_Array_Delete);
+
+  if (isa<CXXRecordDecl>(getDeclContext())) return false;
+  assert(getDeclContext()->getRedeclContext()->isTranslationUnit());
+
+  const FunctionProtoType *proto = getType()->castAs<FunctionProtoType>();
+  if (proto->getNumArgs() != 2 || proto->isVariadic()) return false;
+
+  ASTContext &Context =
+    cast<TranslationUnitDecl>(getDeclContext()->getRedeclContext())
+      ->getASTContext();
+
+  // The result type and first argument type are constant across all
+  // these operators.  The second argument must be exactly void*.
+  return (proto->getArgType(1).getCanonicalType() == Context.VoidPtrTy);
 }
 
 bool FunctionDecl::isExternC() const {
@@ -1687,7 +1739,7 @@ bool FunctionDecl::isInlined() const {
 /// an externally visible symbol, but "extern inline" will not create an 
 /// externally visible symbol.
 bool FunctionDecl::isInlineDefinitionExternallyVisible() const {
-  assert(isThisDeclarationADefinition() && "Must have the function definition");
+  assert(doesThisDeclarationHaveABody() && "Must have the function definition");
   assert(isInlined() && "Function must be inline");
   ASTContext &Context = getASTContext();
   
@@ -2044,13 +2096,24 @@ unsigned FieldDecl::getFieldIndex() const {
   if (CachedFieldIndex) return CachedFieldIndex - 1;
 
   unsigned index = 0;
-  RecordDecl::field_iterator
-    i = getParent()->field_begin(), e = getParent()->field_end();
+  const RecordDecl *RD = getParent();
+  const FieldDecl *LastFD = 0;
+  bool IsMsStruct = RD->hasAttr<MsStructAttr>();
+  
+  RecordDecl::field_iterator i = RD->field_begin(), e = RD->field_end();
   while (true) {
     assert(i != e && "failed to find field in parent!");
     if (*i == this)
       break;
 
+    if (IsMsStruct) {
+      // Zero-length bitfields following non-bitfield members are ignored.
+      if (getASTContext().ZeroBitfieldFollowsNonBitfield((*i), LastFD)) {
+        ++i;
+        continue;
+      }
+      LastFD = (*i);
+    }
     ++i;
     ++index;
   }

@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Serialization/ASTWriter.h"
+#include "ASTCommon.h"
 #include "clang/AST/DeclVisitor.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
@@ -21,6 +22,7 @@
 #include "llvm/Bitcode/BitstreamWriter.h"
 #include "llvm/Support/ErrorHandling.h"
 using namespace clang;
+using namespace serialization;
 
 //===----------------------------------------------------------------------===//
 // Declaration serialization
@@ -84,6 +86,7 @@ namespace clang {
     void VisitClassTemplateDecl(ClassTemplateDecl *D);
     void VisitFunctionTemplateDecl(FunctionTemplateDecl *D);
     void VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D);
+    void VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
     void VisitUsingDecl(UsingDecl *D);
     void VisitUsingShadowDecl(UsingShadowDecl *D);
     void VisitLinkageSpecDecl(LinkageSpecDecl *D);
@@ -125,8 +128,8 @@ void ASTDeclWriter::Visit(Decl *D) {
   // have been written. We want it last because we will not read it back when
   // retrieving it from the AST, we'll just lazily set the offset. 
   if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
-    Record.push_back(FD->isThisDeclarationADefinition());
-    if (FD->isThisDeclarationADefinition())
+    Record.push_back(FD->doesThisDeclarationHaveABody());
+    if (FD->doesThisDeclarationHaveABody())
       Writer.AddStmt(FD->getBody());
   }
 }
@@ -319,8 +322,10 @@ void ASTDeclWriter::VisitFunctionDecl(FunctionDecl *D) {
   Record.push_back(D->isPure());
   Record.push_back(D->hasInheritedPrototype());
   Record.push_back(D->hasWrittenPrototype());
-  Record.push_back(D->isDeleted());
+  Record.push_back(D->isDeletedAsWritten());
   Record.push_back(D->isTrivial());
+  Record.push_back(D->isDefaulted());
+  Record.push_back(D->isExplicitlyDefaulted());
   Record.push_back(D->hasImplicitReturnZero());
   Writer.AddSourceLocation(D->getLocEnd(), Record);
 
@@ -585,6 +590,9 @@ void ASTDeclWriter::VisitImplicitParamDecl(ImplicitParamDecl *D) {
 
 void ASTDeclWriter::VisitParmVarDecl(ParmVarDecl *D) {
   VisitVarDecl(D);
+  Record.push_back(D->isObjCMethodParameter());
+  Record.push_back(D->getFunctionScopeDepth());
+  Record.push_back(D->getFunctionScopeIndex());
   Record.push_back(D->getObjCDeclQualifier()); // FIXME: stable encoding
   Record.push_back(D->isKNRPromoted());
   Record.push_back(D->hasInheritedDefaultArg());
@@ -604,6 +612,7 @@ void ASTDeclWriter::VisitParmVarDecl(ParmVarDecl *D) {
       D->getPCHLevel() == 0 &&
       D->getStorageClass() == 0 &&
       !D->hasCXXDirectInitializer() && // Can params have this ever?
+      D->getFunctionScopeDepth() == 0 &&
       D->getObjCDeclQualifier() == 0 &&
       !D->isKNRPromoted() &&
       !D->hasInheritedDefaultArg() &&
@@ -703,6 +712,20 @@ void ASTDeclWriter::VisitNamespaceDecl(NamespaceDecl *D) {
           ++Result.first;
         }
       }
+    }
+  }
+
+  if (Writer.hasChain() && D->isAnonymousNamespace() && !D->getNextNamespace()){
+    // This is a most recent reopening of the anonymous namespace. If its parent
+    // is in a previous PCH (or is the TU), mark that parent for update, because
+    // the original namespace always points to the latest re-opening of its
+    // anonymous namespace.
+    Decl *Parent = cast<Decl>(
+        D->getParent()->getRedeclContext()->getPrimaryContext());
+    if (Parent->getPCHLevel() > 0) {
+      ASTWriter::UpdateRecord &Record = Writer.DeclUpdates[Parent];
+      Record.push_back(UPD_CXX_ADDED_ANONYMOUS_NAMESPACE);
+      Writer.AddDeclRef(D, Record);
     }
   }
 }
@@ -1013,7 +1036,6 @@ void ASTDeclWriter::VisitTemplateTypeParmDecl(TemplateTypeParmDecl *D) {
   VisitTypeDecl(D);
 
   Record.push_back(D->wasDeclaredWithTypename());
-  Record.push_back(D->isParameterPack());
   Record.push_back(D->defaultArgumentWasInherited());
   Writer.AddTypeSourceInfo(D->getDefaultArgumentInfo(), Record);
 
@@ -1060,6 +1082,11 @@ void ASTDeclWriter::VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D) {
   Record.push_back(D->defaultArgumentWasInherited());
   Record.push_back(D->isParameterPack());
   Code = serialization::DECL_TEMPLATE_TEMPLATE_PARM;
+}
+
+void ASTDeclWriter::VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D) {
+  VisitRedeclarableTemplateDecl(D);
+  Code = serialization::DECL_TYPE_ALIAS_TEMPLATE;
 }
 
 void ASTDeclWriter::VisitStaticAssertDecl(StaticAssertDecl *D) {
@@ -1159,6 +1186,9 @@ void ASTWriter::WriteDeclsBlockAbbrevs() {
   Abv->Add(BitCodeAbbrevOp(0));                       // HasInit
   Abv->Add(BitCodeAbbrevOp(0));                   // HasMemberSpecializationInfo
   // ParmVarDecl
+  Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // IsObjCMethodParameter
+  Abv->Add(BitCodeAbbrevOp(0));                       // ScopeDepth
+  Abv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // ScopeIndex
   Abv->Add(BitCodeAbbrevOp(0));                       // ObjCDeclQualifier
   Abv->Add(BitCodeAbbrevOp(0));                       // KNRPromoted
   Abv->Add(BitCodeAbbrevOp(0));                       // HasInheritedDefaultArg

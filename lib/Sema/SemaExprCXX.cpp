@@ -28,6 +28,7 @@
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/ErrorHandling.h"
 using namespace clang;
 using namespace sema;
 
@@ -384,13 +385,14 @@ static UuidAttr *GetUuidAttrOfType(QualType QT) {
   else if (QT->isArrayType())
     Ty = cast<ArrayType>(QT)->getElementType().getTypePtr();
 
-  // Loop all class definition and declaration looking for an uuid attribute.
+  // Loop all record redeclaration looking for an uuid attribute.
   CXXRecordDecl *RD = Ty->getAsCXXRecordDecl();
-  while (RD) {
-    if (UuidAttr *Uuid = RD->getAttr<UuidAttr>())
+  for (CXXRecordDecl::redecl_iterator I = RD->redecls_begin(),
+       E = RD->redecls_end(); I != E; ++I) {
+    if (UuidAttr *Uuid = I->getAttr<UuidAttr>())
       return Uuid;
-    RD = RD->getPreviousDeclaration();
   }
+
   return 0;
 }
 
@@ -949,8 +951,8 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
       }
     }
 
-    ArraySize = ImpCastExprToType(ArraySize, Context.getSizeType(),
-                      CK_IntegralCast).take();
+    // Note that we do *not* convert the argument in any way.  It can
+    // be signed, larger than size_t, whatever.
   }
 
   FunctionDecl *OperatorNew = 0;
@@ -1325,11 +1327,12 @@ bool Sema::FindAllocationFunctions(SourceLocation StartLoc, SourceRange Range,
 bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
                                   DeclarationName Name, Expr** Args,
                                   unsigned NumArgs, DeclContext *Ctx,
-                                  bool AllowMissing, FunctionDecl *&Operator) {
+                                  bool AllowMissing, FunctionDecl *&Operator,
+                                  bool Diagnose) {
   LookupResult R(*this, Name, StartLoc, LookupOrdinaryName);
   LookupQualifiedName(R, Ctx);
   if (R.empty()) {
-    if (AllowMissing)
+    if (AllowMissing || !Diagnose)
       return false;
     return Diag(StartLoc, diag::err_ovl_no_viable_function_in_call)
       << Name << Range;
@@ -1373,40 +1376,46 @@ bool Sema::FindAllocationOverload(SourceLocation StartLoc, SourceRange Range,
     // Watch out for variadic allocator function.
     unsigned NumArgsInFnDecl = FnDecl->getNumParams();
     for (unsigned i = 0; (i < NumArgs && i < NumArgsInFnDecl); ++i) {
+      InitializedEntity Entity = InitializedEntity::InitializeParameter(Context,
+                                                       FnDecl->getParamDecl(i));
+
+      if (!Diagnose && !CanPerformCopyInitialization(Entity, Owned(Args[i])))
+        return true;
+
       ExprResult Result
-        = PerformCopyInitialization(InitializedEntity::InitializeParameter(
-                                                       Context,
-                                                       FnDecl->getParamDecl(i)),
-                                    SourceLocation(),
-                                    Owned(Args[i]));
+        = PerformCopyInitialization(Entity, SourceLocation(), Owned(Args[i]));
       if (Result.isInvalid())
         return true;
 
       Args[i] = Result.takeAs<Expr>();
     }
     Operator = FnDecl;
-    CheckAllocationAccess(StartLoc, Range, R.getNamingClass(), Best->FoundDecl);
+    CheckAllocationAccess(StartLoc, Range, R.getNamingClass(), Best->FoundDecl,
+                          Diagnose);
     return false;
   }
 
   case OR_No_Viable_Function:
-    Diag(StartLoc, diag::err_ovl_no_viable_function_in_call)
-      << Name << Range;
+    if (Diagnose)
+      Diag(StartLoc, diag::err_ovl_no_viable_function_in_call)
+        << Name << Range;
     Candidates.NoteCandidates(*this, OCD_AllCandidates, Args, NumArgs);
     return true;
 
   case OR_Ambiguous:
-    Diag(StartLoc, diag::err_ovl_ambiguous_call)
-      << Name << Range;
+    if (Diagnose)
+      Diag(StartLoc, diag::err_ovl_ambiguous_call)
+        << Name << Range;
     Candidates.NoteCandidates(*this, OCD_ViableCandidates, Args, NumArgs);
     return true;
 
   case OR_Deleted: {
-    Diag(StartLoc, diag::err_ovl_deleted_call)
-      << Best->Function->isDeleted()
-      << Name 
-      << getDeletedOrUnavailableSuffix(Best->Function)
-      << Range;
+    if (Diagnose)
+      Diag(StartLoc, diag::err_ovl_deleted_call)
+        << Best->Function->isDeleted()
+        << Name 
+        << getDeletedOrUnavailableSuffix(Best->Function)
+        << Range;
     Candidates.NoteCandidates(*this, OCD_AllCandidates, Args, NumArgs);
     return true;
   }
@@ -1567,7 +1576,7 @@ void Sema::DeclareGlobalAllocationFunction(DeclarationName Name,
 
 bool Sema::FindDeallocationFunction(SourceLocation StartLoc, CXXRecordDecl *RD,
                                     DeclarationName Name,
-                                    FunctionDecl* &Operator) {
+                                    FunctionDecl* &Operator, bool Diagnose) {
   LookupResult Found(*this, Name, StartLoc, LookupOrdinaryName);
   // Try to find operator delete/operator delete[] in class scope.
   LookupQualifiedName(Found, RD);
@@ -1594,33 +1603,45 @@ bool Sema::FindDeallocationFunction(SourceLocation StartLoc, CXXRecordDecl *RD,
   // There's exactly one suitable operator;  pick it.
   if (Matches.size() == 1) {
     Operator = cast<CXXMethodDecl>(Matches[0]->getUnderlyingDecl());
+
+    if (Operator->isDeleted()) {
+      if (Diagnose) {
+        Diag(StartLoc, diag::err_deleted_function_use);
+        Diag(Operator->getLocation(), diag::note_unavailable_here) << true;
+      }
+      return true;
+    }
+
     CheckAllocationAccess(StartLoc, SourceRange(), Found.getNamingClass(),
-                          Matches[0]);
+                          Matches[0], Diagnose);
     return false;
 
   // We found multiple suitable operators;  complain about the ambiguity.
   } else if (!Matches.empty()) {
-    Diag(StartLoc, diag::err_ambiguous_suitable_delete_member_function_found)
-      << Name << RD;
+    if (Diagnose) {
+      Diag(StartLoc, diag::err_ambiguous_suitable_delete_member_function_found)
+        << Name << RD;
 
-    for (llvm::SmallVectorImpl<DeclAccessPair>::iterator
-           F = Matches.begin(), FEnd = Matches.end(); F != FEnd; ++F)
-      Diag((*F)->getUnderlyingDecl()->getLocation(),
-           diag::note_member_declared_here) << Name;
+      for (llvm::SmallVectorImpl<DeclAccessPair>::iterator
+             F = Matches.begin(), FEnd = Matches.end(); F != FEnd; ++F)
+        Diag((*F)->getUnderlyingDecl()->getLocation(),
+             diag::note_member_declared_here) << Name;
+    }
     return true;
   }
 
   // We did find operator delete/operator delete[] declarations, but
   // none of them were suitable.
   if (!Found.empty()) {
-    Diag(StartLoc, diag::err_no_suitable_delete_member_function_found)
-      << Name << RD;
+    if (Diagnose) {
+      Diag(StartLoc, diag::err_no_suitable_delete_member_function_found)
+        << Name << RD;
 
-    for (LookupResult::iterator F = Found.begin(), FEnd = Found.end();
-         F != FEnd; ++F)
-      Diag((*F)->getUnderlyingDecl()->getLocation(),
-           diag::note_member_declared_here) << Name;
-
+      for (LookupResult::iterator F = Found.begin(), FEnd = Found.end();
+           F != FEnd; ++F)
+        Diag((*F)->getUnderlyingDecl()->getLocation(),
+             diag::note_member_declared_here) << Name;
+    }
     return true;
   }
 
@@ -1632,8 +1653,8 @@ bool Sema::FindDeallocationFunction(SourceLocation StartLoc, CXXRecordDecl *RD,
   Expr* DeallocArgs[1];
   DeallocArgs[0] = &Null;
   if (FindAllocationOverload(StartLoc, SourceRange(), Name,
-                             DeallocArgs, 1, TUDecl, /*AllowMissing=*/false,
-                             Operator))
+                             DeallocArgs, 1, TUDecl, !Diagnose,
+                             Operator, Diagnose))
     return true;
 
   assert(Operator && "Did not find a deallocation function!");
@@ -1779,6 +1800,20 @@ Sema::ActOnCXXDelete(SourceLocation StartLoc, bool UseGlobal,
                                     const_cast<CXXDestructorDecl*>(Dtor));
           DiagnoseUseOfDecl(Dtor, StartLoc);
         }
+
+      // C++ [expr.delete]p3:
+      //   In the first alternative (delete object), if the static type of the
+      //   object to be deleted is different from its dynamic type, the static
+      //   type shall be a base class of the dynamic type of the object to be
+      //   deleted and the static type shall have a virtual destructor or the
+      //   behavior is undefined.
+      //
+      // Note: a final class cannot be derived from, no issue there
+      if (!ArrayForm && RD->isPolymorphic() && !RD->hasAttr<FinalAttr>()) {
+        CXXDestructorDecl *dtor = RD->getDestructor();
+        if (!dtor || !dtor->isVirtual())
+          Diag(StartLoc, diag::warn_delete_non_virtual_dtor) << PointeeElem;
+      }
     }
 
     if (!OperatorDelete) {
@@ -2351,42 +2386,201 @@ ExprResult Sema::ActOnUnaryTypeTrait(UnaryTypeTrait UTT,
   return BuildUnaryTypeTrait(UTT, KWLoc, TSInfo, RParen);
 }
 
-static bool EvaluateUnaryTypeTrait(Sema &Self, UnaryTypeTrait UTT, QualType T,
-                                   SourceLocation KeyLoc) {
-  // FIXME: For many of these traits, we need a complete type before we can 
-  // check these properties.
-  assert(!T->isDependentType() &&
-         "Cannot evaluate traits for dependent types.");
+/// \brief Check the completeness of a type in a unary type trait.
+///
+/// If the particular type trait requires a complete type, tries to complete
+/// it. If completing the type fails, a diagnostic is emitted and false
+/// returned. If completing the type succeeds or no completion was required,
+/// returns true.
+static bool CheckUnaryTypeTraitTypeCompleteness(Sema &S,
+                                                UnaryTypeTrait UTT,
+                                                SourceLocation Loc,
+                                                QualType ArgTy) {
+  // C++0x [meta.unary.prop]p3:
+  //   For all of the class templates X declared in this Clause, instantiating
+  //   that template with a template argument that is a class template
+  //   specialization may result in the implicit instantiation of the template
+  //   argument if and only if the semantics of X require that the argument
+  //   must be a complete type.
+  // We apply this rule to all the type trait expressions used to implement
+  // these class templates. We also try to follow any GCC documented behavior
+  // in these expressions to ensure portability of standard libraries.
+  switch (UTT) {
+    // is_complete_type somewhat obviously cannot require a complete type.
+  case UTT_IsCompleteType:
+    // Fall-through
+
+    // These traits are modeled on the type predicates in C++0x
+    // [meta.unary.cat] and [meta.unary.comp]. They are not specified as
+    // requiring a complete type, as whether or not they return true cannot be
+    // impacted by the completeness of the type.
+  case UTT_IsVoid:
+  case UTT_IsIntegral:
+  case UTT_IsFloatingPoint:
+  case UTT_IsArray:
+  case UTT_IsPointer:
+  case UTT_IsLvalueReference:
+  case UTT_IsRvalueReference:
+  case UTT_IsMemberFunctionPointer:
+  case UTT_IsMemberObjectPointer:
+  case UTT_IsEnum:
+  case UTT_IsUnion:
+  case UTT_IsClass:
+  case UTT_IsFunction:
+  case UTT_IsReference:
+  case UTT_IsArithmetic:
+  case UTT_IsFundamental:
+  case UTT_IsObject:
+  case UTT_IsScalar:
+  case UTT_IsCompound:
+  case UTT_IsMemberPointer:
+    // Fall-through
+
+    // These traits are modeled on type predicates in C++0x [meta.unary.prop]
+    // which requires some of its traits to have the complete type. However,
+    // the completeness of the type cannot impact these traits' semantics, and
+    // so they don't require it. This matches the comments on these traits in
+    // Table 49.
+  case UTT_IsConst:
+  case UTT_IsVolatile:
+  case UTT_IsSigned:
+  case UTT_IsUnsigned:
+    return true;
+
+    // C++0x [meta.unary.prop] Table 49 requires the following traits to be
+    // applied to a complete type.
+  case UTT_IsTrivial:
+  case UTT_IsTriviallyCopyable:
+  case UTT_IsStandardLayout:
+  case UTT_IsPOD:
+  case UTT_IsLiteral:
+  case UTT_IsEmpty:
+  case UTT_IsPolymorphic:
+  case UTT_IsAbstract:
+    // Fall-through
+
+    // These trait expressions are designed to help implement predicates in
+    // [meta.unary.prop] despite not being named the same. They are specified
+    // by both GCC and the Embarcadero C++ compiler, and require the complete
+    // type due to the overarching C++0x type predicates being implemented
+    // requiring the complete type.
+  case UTT_HasNothrowAssign:
+  case UTT_HasNothrowConstructor:
+  case UTT_HasNothrowCopy:
+  case UTT_HasTrivialAssign:
+  case UTT_HasTrivialDefaultConstructor:
+  case UTT_HasTrivialCopy:
+  case UTT_HasTrivialDestructor:
+  case UTT_HasVirtualDestructor:
+    // Arrays of unknown bound are expressly allowed.
+    QualType ElTy = ArgTy;
+    if (ArgTy->isIncompleteArrayType())
+      ElTy = S.Context.getAsArrayType(ArgTy)->getElementType();
+
+    // The void type is expressly allowed.
+    if (ElTy->isVoidType())
+      return true;
+
+    return !S.RequireCompleteType(
+      Loc, ElTy, diag::err_incomplete_type_used_in_type_trait_expr);
+  }
+  llvm_unreachable("Type trait not handled by switch");
+}
+
+static bool EvaluateUnaryTypeTrait(Sema &Self, UnaryTypeTrait UTT,
+                                   SourceLocation KeyLoc, QualType T) {
+  assert(!T->isDependentType() && "Cannot evaluate traits of dependent type");
+
   ASTContext &C = Self.Context;
   switch(UTT) {
-  default: assert(false && "Unknown type trait or not implemented");
-  case UTT_IsPOD: return T->isPODType();
-  case UTT_IsLiteral: return T->isLiteralType();
-  case UTT_IsClass: // Fallthrough
+    // Type trait expressions corresponding to the primary type category
+    // predicates in C++0x [meta.unary.cat].
+  case UTT_IsVoid:
+    return T->isVoidType();
+  case UTT_IsIntegral:
+    return T->isIntegralType(C);
+  case UTT_IsFloatingPoint:
+    return T->isFloatingType();
+  case UTT_IsArray:
+    return T->isArrayType();
+  case UTT_IsPointer:
+    return T->isPointerType();
+  case UTT_IsLvalueReference:
+    return T->isLValueReferenceType();
+  case UTT_IsRvalueReference:
+    return T->isRValueReferenceType();
+  case UTT_IsMemberFunctionPointer:
+    return T->isMemberFunctionPointerType();
+  case UTT_IsMemberObjectPointer:
+    return T->isMemberDataPointerType();
+  case UTT_IsEnum:
+    return T->isEnumeralType();
   case UTT_IsUnion:
-    if (const RecordType *Record = T->getAs<RecordType>()) {
-      bool Union = Record->getDecl()->isUnion();
-      return UTT == UTT_IsUnion ? Union : !Union;
-    }
+    return T->isUnionType();
+  case UTT_IsClass:
+    return T->isClassType() || T->isStructureType();
+  case UTT_IsFunction:
+    return T->isFunctionType();
+
+    // Type trait expressions which correspond to the convenient composition
+    // predicates in C++0x [meta.unary.comp].
+  case UTT_IsReference:
+    return T->isReferenceType();
+  case UTT_IsArithmetic:
+    return T->isArithmeticType() && !T->isEnumeralType();
+  case UTT_IsFundamental:
+    return T->isFundamentalType();
+  case UTT_IsObject:
+    return T->isObjectType();
+  case UTT_IsScalar:
+    return T->isScalarType();
+  case UTT_IsCompound:
+    return T->isCompoundType();
+  case UTT_IsMemberPointer:
+    return T->isMemberPointerType();
+
+    // Type trait expressions which correspond to the type property predicates
+    // in C++0x [meta.unary.prop].
+  case UTT_IsConst:
+    return T.isConstQualified();
+  case UTT_IsVolatile:
+    return T.isVolatileQualified();
+  case UTT_IsTrivial:
+    return T->isTrivialType();
+  case UTT_IsTriviallyCopyable:
+    return T->isTriviallyCopyableType();
+  case UTT_IsStandardLayout:
+    return T->isStandardLayoutType();
+  case UTT_IsPOD:
+    return T->isPODType();
+  case UTT_IsLiteral:
+    return T->isLiteralType();
+  case UTT_IsEmpty:
+    if (const CXXRecordDecl *RD = T->getAsCXXRecordDecl())
+      return !RD->isUnion() && RD->isEmpty();
     return false;
-  case UTT_IsEnum: return T->isEnumeralType();
   case UTT_IsPolymorphic:
-    if (const RecordType *Record = T->getAs<RecordType>()) {
-      // Type traits are only parsed in C++, so we've got CXXRecords.
-      return cast<CXXRecordDecl>(Record->getDecl())->isPolymorphic();
-    }
+    if (const CXXRecordDecl *RD = T->getAsCXXRecordDecl())
+      return RD->isPolymorphic();
     return false;
   case UTT_IsAbstract:
-    if (const RecordType *RT = T->getAs<RecordType>())
-      return cast<CXXRecordDecl>(RT->getDecl())->isAbstract();
+    if (const CXXRecordDecl *RD = T->getAsCXXRecordDecl())
+      return RD->isAbstract();
     return false;
-  case UTT_IsEmpty:
-    if (const RecordType *Record = T->getAs<RecordType>()) {
-      return !Record->getDecl()->isUnion()
-          && cast<CXXRecordDecl>(Record->getDecl())->isEmpty();
-    }
-    return false;
-  case UTT_HasTrivialConstructor:
+  case UTT_IsSigned:
+    return T->isSignedIntegerType();
+  case UTT_IsUnsigned:
+    return T->isUnsignedIntegerType();
+
+    // Type trait expressions which query classes regarding their construction,
+    // destruction, and copying. Rather than being based directly on the
+    // related type predicates in the standard, they are specified by both
+    // GCC[1] and the Embarcadero C++ compiler[2], and Clang implements those
+    // specifications.
+    //
+    //   1: http://gcc.gnu/.org/onlinedocs/gcc/Type-Traits.html
+    //   2: http://docwiki.embarcadero.com/RADStudio/XE/en/Type_Trait_Functions_(C%2B%2B0x)_Index
+  case UTT_HasTrivialDefaultConstructor:
     // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
     //   If __is_pod (type) is true then the trait is true, else if type is
     //   a cv class or union type (or array thereof) with a trivial default
@@ -2395,7 +2589,7 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, UnaryTypeTrait UTT, QualType T,
       return true;
     if (const RecordType *RT =
           C.getBaseElementType(T)->getAs<RecordType>())
-      return cast<CXXRecordDecl>(RT->getDecl())->hasTrivialConstructor();
+      return cast<CXXRecordDecl>(RT->getDecl())->hasTrivialDefaultConstructor();
     return false;
   case UTT_HasTrivialCopy:
     // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
@@ -2536,7 +2730,7 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, UnaryTypeTrait UTT, QualType T,
       return true;
     if (const RecordType *RT = C.getBaseElementType(T)->getAs<RecordType>()) {
       CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
-      if (RD->hasTrivialConstructor())
+      if (RD->hasTrivialDefaultConstructor())
         return true;
 
       DeclContext::lookup_const_iterator Con, ConEnd;
@@ -2566,7 +2760,17 @@ static bool EvaluateUnaryTypeTrait(Sema &Self, UnaryTypeTrait UTT, QualType T,
         return Destructor->isVirtual();
     }
     return false;
+
+    // These type trait expressions are modeled on the specifications for the
+    // Embarcadero C++0x type trait functions:
+    //   http://docwiki.embarcadero.com/RADStudio/XE/en/Type_Trait_Functions_(C%2B%2B0x)_Index
+  case UTT_IsCompleteType:
+    // http://docwiki.embarcadero.com/RADStudio/XE/en/Is_complete_type_(typename_T_):
+    //   Returns True if and only if T is a complete type at the point of the
+    //   function call.
+    return !T->isIncompleteType();
   }
+  llvm_unreachable("Type trait not covered by switch");
 }
 
 ExprResult Sema::BuildUnaryTypeTrait(UnaryTypeTrait UTT,
@@ -2574,23 +2778,12 @@ ExprResult Sema::BuildUnaryTypeTrait(UnaryTypeTrait UTT,
                                      TypeSourceInfo *TSInfo,
                                      SourceLocation RParen) {
   QualType T = TSInfo->getType();
-
-  // According to http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html
-  // all traits except __is_class, __is_enum and __is_union require a the type
-  // to be complete, an array of unknown bound, or void.
-  if (UTT != UTT_IsClass && UTT != UTT_IsEnum && UTT != UTT_IsUnion) {
-    QualType E = T;
-    if (T->isIncompleteArrayType())
-      E = Context.getAsArrayType(T)->getElementType();
-    if (!T->isVoidType() &&
-        RequireCompleteType(KWLoc, E,
-                            diag::err_incomplete_type_used_in_type_trait_expr))
-      return ExprError();
-  }
+  if (!CheckUnaryTypeTraitTypeCompleteness(*this, UTT, KWLoc, T))
+    return ExprError();
 
   bool Value = false;
   if (!T->isDependentType())
-    Value = EvaluateUnaryTypeTrait(*this, UTT, T, KWLoc);
+    Value = EvaluateUnaryTypeTrait(*this, UTT, KWLoc, T);
 
   return Owned(new (Context) UnaryTypeTraitExpr(KWLoc, UTT, TSInfo, Value,
                                                 RParen, Context.BoolTy));
@@ -2617,8 +2810,8 @@ ExprResult Sema::ActOnBinaryTypeTrait(BinaryTypeTrait BTT,
 static bool EvaluateBinaryTypeTrait(Sema &Self, BinaryTypeTrait BTT,
                                     QualType LhsT, QualType RhsT,
                                     SourceLocation KeyLoc) {
-  assert((!LhsT->isDependentType() || RhsT->isDependentType()) &&
-         "Cannot evaluate traits for dependent types.");
+  assert(!LhsT->isDependentType() && !RhsT->isDependentType() &&
+         "Cannot evaluate traits of dependent types");
 
   switch(BTT) {
   case BTT_IsBaseOf: {
@@ -2650,11 +2843,12 @@ static bool EvaluateBinaryTypeTrait(Sema &Self, BinaryTypeTrait BTT,
     return cast<CXXRecordDecl>(rhsRecord->getDecl())
       ->isDerivedFrom(cast<CXXRecordDecl>(lhsRecord->getDecl()));
   }
-
+  case BTT_IsSame:
+    return Self.Context.hasSameType(LhsT, RhsT);
   case BTT_TypeCompatible:
     return Self.Context.typesAreCompatible(LhsT.getUnqualifiedType(),
                                            RhsT.getUnqualifiedType());
-      
+  case BTT_IsConvertible:
   case BTT_IsConvertibleTo: {
     // C++0x [meta.rel]p4:
     //   Given the following function prototype:
@@ -2729,6 +2923,8 @@ ExprResult Sema::BuildBinaryTypeTrait(BinaryTypeTrait BTT,
   QualType ResultType;
   switch (BTT) {
   case BTT_IsBaseOf:       ResultType = Context.BoolTy; break;
+  case BTT_IsConvertible:  ResultType = Context.BoolTy; break;
+  case BTT_IsSame:         ResultType = Context.BoolTy; break;
   case BTT_TypeCompatible: ResultType = Context.IntTy; break;
   case BTT_IsConvertibleTo: ResultType = Context.BoolTy; break;
   }
@@ -2736,6 +2932,137 @@ ExprResult Sema::BuildBinaryTypeTrait(BinaryTypeTrait BTT,
   return Owned(new (Context) BinaryTypeTraitExpr(KWLoc, BTT, LhsTSInfo,
                                                  RhsTSInfo, Value, RParen,
                                                  ResultType));
+}
+
+ExprResult Sema::ActOnArrayTypeTrait(ArrayTypeTrait ATT,
+                                     SourceLocation KWLoc,
+                                     ParsedType Ty,
+                                     Expr* DimExpr,
+                                     SourceLocation RParen) {
+  TypeSourceInfo *TSInfo;
+  QualType T = GetTypeFromParser(Ty, &TSInfo);
+  if (!TSInfo)
+    TSInfo = Context.getTrivialTypeSourceInfo(T);
+
+  return BuildArrayTypeTrait(ATT, KWLoc, TSInfo, DimExpr, RParen);
+}
+
+static uint64_t EvaluateArrayTypeTrait(Sema &Self, ArrayTypeTrait ATT,
+                                           QualType T, Expr *DimExpr,
+                                           SourceLocation KeyLoc) {
+  assert(!T->isDependentType() && "Cannot evaluate traits of dependent type");
+
+  switch(ATT) {
+  case ATT_ArrayRank:
+    if (T->isArrayType()) {
+      unsigned Dim = 0;
+      while (const ArrayType *AT = Self.Context.getAsArrayType(T)) {
+        ++Dim;
+        T = AT->getElementType();
+      }
+      return Dim;
+    }
+    return 0;
+
+  case ATT_ArrayExtent: {
+    llvm::APSInt Value;
+    uint64_t Dim;
+    if (DimExpr->isIntegerConstantExpr(Value, Self.Context, 0, false)) {
+      if (Value < llvm::APSInt(Value.getBitWidth(), Value.isUnsigned())) {
+        Self.Diag(KeyLoc, diag::err_dimension_expr_not_constant_integer) <<
+          DimExpr->getSourceRange();
+        return false;
+      }
+      Dim = Value.getLimitedValue();
+    } else {
+      Self.Diag(KeyLoc, diag::err_dimension_expr_not_constant_integer) <<
+        DimExpr->getSourceRange();
+      return false;
+    }
+
+    if (T->isArrayType()) {
+      unsigned D = 0;
+      bool Matched = false;
+      while (const ArrayType *AT = Self.Context.getAsArrayType(T)) {
+        if (Dim == D) {
+          Matched = true;
+          break;
+        }
+        ++D;
+        T = AT->getElementType();
+      }
+
+      if (Matched && T->isArrayType()) {
+        if (const ConstantArrayType *CAT = Self.Context.getAsConstantArrayType(T))
+          return CAT->getSize().getLimitedValue();
+      }
+    }
+    return 0;
+  }
+  }
+  llvm_unreachable("Unknown type trait or not implemented");
+}
+
+ExprResult Sema::BuildArrayTypeTrait(ArrayTypeTrait ATT,
+                                     SourceLocation KWLoc,
+                                     TypeSourceInfo *TSInfo,
+                                     Expr* DimExpr,
+                                     SourceLocation RParen) {
+  QualType T = TSInfo->getType();
+
+  // FIXME: This should likely be tracked as an APInt to remove any host
+  // assumptions about the width of size_t on the target.
+  uint64_t Value = 0;
+  if (!T->isDependentType())
+    Value = EvaluateArrayTypeTrait(*this, ATT, T, DimExpr, KWLoc);
+
+  // While the specification for these traits from the Embarcadero C++
+  // compiler's documentation says the return type is 'unsigned int', Clang
+  // returns 'size_t'. On Windows, the primary platform for the Embarcadero
+  // compiler, there is no difference. On several other platforms this is an
+  // important distinction.
+  return Owned(new (Context) ArrayTypeTraitExpr(KWLoc, ATT, TSInfo, Value,
+                                                DimExpr, RParen,
+                                                Context.getSizeType()));
+}
+
+ExprResult Sema::ActOnExpressionTrait(ExpressionTrait ET,
+                                      SourceLocation KWLoc,
+                                      Expr *Queried,
+                                      SourceLocation RParen) {
+  // If error parsing the expression, ignore.
+  if (!Queried)
+    return ExprError();
+
+  ExprResult Result = BuildExpressionTrait(ET, KWLoc, Queried, RParen);
+
+  return move(Result);
+}
+
+static bool EvaluateExpressionTrait(ExpressionTrait ET, Expr *E) {
+  switch (ET) {
+  case ET_IsLValueExpr: return E->isLValue();
+  case ET_IsRValueExpr: return E->isRValue();
+  }
+  llvm_unreachable("Expression trait not covered by switch");
+}
+
+ExprResult Sema::BuildExpressionTrait(ExpressionTrait ET,
+                                      SourceLocation KWLoc,
+                                      Expr *Queried,
+                                      SourceLocation RParen) {
+  if (Queried->isTypeDependent()) {
+    // Delay type-checking for type-dependent expressions.
+  } else if (Queried->getType()->isPlaceholderType()) {
+    ExprResult PE = CheckPlaceholderExpr(Queried);
+    if (PE.isInvalid()) return ExprError();
+    return BuildExpressionTrait(ET, KWLoc, PE.take(), RParen);
+  }
+
+  bool Value = EvaluateExpressionTrait(ET, Queried);
+
+  return Owned(new (Context) ExpressionTraitExpr(KWLoc, ET, Queried, Value,
+                                                 RParen, Context.BoolTy));
 }
 
 QualType Sema::CheckPointerToMemberOperands(ExprResult &lex, ExprResult &rex,
@@ -2817,13 +3144,6 @@ QualType Sema::CheckPointerToMemberOperands(ExprResult &lex, ExprResult &rex,
   //   second operand.
   // The cv qualifiers are the union of those in the pointer and the left side,
   // in accordance with 5.5p5 and 5.2.5.
-  // FIXME: This returns a dereferenced member function pointer as a normal
-  // function type. However, the only operation valid on such functions is
-  // calling them. There's also a GCC extension to get a function pointer to the
-  // thing, which is another complication, because this type - unlike the type
-  // that is the result of this expression - takes the class as the first
-  // argument.
-  // We probably need a "MemberFunctionClosureType" or something like that.
   QualType Result = MemPtr->getPointeeType();
   Result = Context.getCVRQualifiedType(Result, LType.getCVRQualifiers());
 
@@ -2860,12 +3180,14 @@ QualType Sema::CheckPointerToMemberOperands(ExprResult &lex, ExprResult &rex,
   //   operand is a pointer to a member function is a prvalue. The
   //   result of an ->* expression is an lvalue if its second operand
   //   is a pointer to data member and a prvalue otherwise.
-  if (Result->isFunctionType())
+  if (Result->isFunctionType()) {
     VK = VK_RValue;
-  else if (isIndirect)
+    return Context.BoundMemberTy;
+  } else if (isIndirect) {
     VK = VK_LValue;
-  else
+  } else {
     VK = lex.get()->getValueKind();
+  }
 
   return Result;
 }
@@ -4009,4 +4331,19 @@ StmtResult Sema::ActOnFinishFullStmt(Stmt *FullStmt) {
   if (!FullStmt) return StmtError();
 
   return MaybeCreateStmtWithCleanups(FullStmt);
+}
+
+bool Sema::CheckMicrosoftIfExistsSymbol(CXXScopeSpec &SS,
+                                        UnqualifiedId &Name) {
+  DeclarationNameInfo TargetNameInfo = GetNameFromUnqualifiedId(Name);
+  DeclarationName TargetName = TargetNameInfo.getName();
+  if (!TargetName)
+    return false;
+
+  // Do the redeclaration lookup in the current scope.
+  LookupResult R(*this, TargetNameInfo, Sema::LookupAnyName,
+                 Sema::NotForRedeclaration);
+  R.suppressDiagnostics();
+  LookupParsedName(R, getCurScope(), &SS);
+  return !R.empty(); 
 }

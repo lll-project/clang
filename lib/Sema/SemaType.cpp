@@ -836,6 +836,18 @@ static QualType ConvertDeclSpecToType(Sema &S, TypeProcessingState &state) {
     }
     break;
   }
+  case DeclSpec::TST_underlyingType:
+    Result = S.GetTypeFromParser(DS.getRepAsType());
+    assert(!Result.isNull() && "Didn't get a type for __underlying_type?");
+    Result = S.BuildUnaryTransformType(Result,
+                                       UnaryTransformType::EnumUnderlyingType,
+                                       DS.getTypeSpecTypeLoc());
+    if (Result.isNull()) {
+      Result = Context.IntTy;
+      declarator.setInvalidType(true);
+    }
+    break; 
+
   case DeclSpec::TST_auto: {
     // TypeQuals handled by caller.
     Result = Context.getAutoType(QualType());
@@ -1048,6 +1060,9 @@ QualType Sema::BuildPointerType(QualType T,
 QualType Sema::BuildReferenceType(QualType T, bool SpelledAsLValue,
                                   SourceLocation Loc,
                                   DeclarationName Entity) {
+  assert(Context.getCanonicalType(T) != Context.OverloadTy && 
+         "Unresolved overloaded function type");
+  
   // C++0x [dcl.ref]p6:
   //   If a typedef (7.1.3), a type template-parameter (14.3.1), or a 
   //   decltype-specifier (7.1.6.2) denotes a type TR that is a reference to a 
@@ -1601,6 +1616,7 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
       Error = 7; // Template type argument
       break;
     case Declarator::AliasDeclContext:
+    case Declarator::AliasTemplateContext:
       Error = 9; // Type alias
       break;
     case Declarator::TypeNameContext:
@@ -1659,7 +1675,8 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
   // Does this declaration declare a typedef-name?
   bool IsTypedefName =
     D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_typedef ||
-    D.getContext() == Declarator::AliasDeclContext;
+    D.getContext() == Declarator::AliasDeclContext ||
+    D.getContext() == Declarator::AliasTemplateContext;
 
   // Walk the DeclTypeInfo, building the recursive type as we go.
   // DeclTypeInfos are ordered from the identifier out, which is
@@ -1839,7 +1856,8 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
       // anyway.
       if (IsTypedefName && FTI.getExceptionSpecType())
         Diag(FTI.getExceptionSpecLoc(), diag::err_exception_spec_in_typedef)
-          << (D.getContext() == Declarator::AliasDeclContext);
+          << (D.getContext() == Declarator::AliasDeclContext ||
+              D.getContext() == Declarator::AliasTemplateContext);
 
       if (!FTI.NumArgs && !FTI.isVariadic && !getLangOptions().CPlusPlus) {
         // Simple void foo(), where the incoming T is the result type.
@@ -2204,6 +2222,7 @@ TypeSourceInfo *Sema::GetTypeForDeclarator(Declarator &D, Scope *S,
     case Declarator::ObjCPrototypeContext: // FIXME: special diagnostic here?
     case Declarator::TypeNameContext:
     case Declarator::AliasDeclContext:
+    case Declarator::AliasTemplateContext:
     case Declarator::MemberContext:
     case Declarator::BlockContext:
     case Declarator::ForContext:
@@ -2361,6 +2380,16 @@ namespace {
     void VisitTypeOfTypeLoc(TypeOfTypeLoc TL) {
       assert(DS.getTypeSpecType() == DeclSpec::TST_typeofType);
       TL.setTypeofLoc(DS.getTypeSpecTypeLoc());
+      TL.setParensRange(DS.getTypeofParensRange());
+      assert(DS.getRepAsType());
+      TypeSourceInfo *TInfo = 0;
+      Sema::GetTypeFromParser(DS.getRepAsType(), &TInfo);
+      TL.setUnderlyingTInfo(TInfo);
+    }
+    void VisitUnaryTransformTypeLoc(UnaryTransformTypeLoc TL) {
+      // FIXME: This holds only because we only have one unary transform.
+      assert(DS.getTypeSpecType() == DeclSpec::TST_underlyingType);
+      TL.setKWLoc(DS.getTypeSpecTypeLoc());
       TL.setParensRange(DS.getTypeofParensRange());
       assert(DS.getRepAsType());
       TypeSourceInfo *TInfo = 0;
@@ -2640,13 +2669,17 @@ TypeResult Sema::ActOnTypeName(Scope *S, Declarator &D) {
     CheckExtraCXXDefaultArguments(D);
 
     // C++0x [dcl.type]p3:
-    //   A type-specifier-seq shall not define a class or enumeration
-    //   unless it appears in the type-id of an alias-declaration
-    //   (7.1.3).
-    if (OwnedTag && OwnedTag->isDefinition() &&
-        D.getContext() != Declarator::AliasDeclContext)
-      Diag(OwnedTag->getLocation(), diag::err_type_defined_in_type_specifier)
-        << Context.getTypeDeclType(OwnedTag);
+    //   A type-specifier-seq shall not define a class or enumeration unless
+    //   it appears in the type-id of an alias-declaration (7.1.3) that is not
+    //   the declaration of a template-declaration.
+    if (OwnedTag && OwnedTag->isDefinition()) {
+      if (D.getContext() == Declarator::AliasTemplateContext)
+        Diag(OwnedTag->getLocation(), diag::err_type_defined_in_alias_template)
+          << Context.getTypeDeclType(OwnedTag);
+      else if (D.getContext() != Declarator::AliasDeclContext)
+        Diag(OwnedTag->getLocation(), diag::err_type_defined_in_type_specifier)
+          << Context.getTypeDeclType(OwnedTag);
+    }
   }
 
   return CreateParsedType(T, TInfo);
@@ -3362,4 +3395,28 @@ QualType Sema::BuildDecltypeType(Expr *E, SourceLocation Loc) {
   E = ER.take();
   
   return Context.getDecltypeType(E);
+}
+
+QualType Sema::BuildUnaryTransformType(QualType BaseType,
+                                       UnaryTransformType::UTTKind UKind,
+                                       SourceLocation Loc) {
+  switch (UKind) {
+  case UnaryTransformType::EnumUnderlyingType:
+    if (!BaseType->isDependentType() && !BaseType->isEnumeralType()) {
+      Diag(Loc, diag::err_only_enums_have_underlying_types);
+      return QualType();
+    } else {
+      QualType Underlying = BaseType;
+      if (!BaseType->isDependentType()) {
+        EnumDecl *ED = BaseType->getAs<EnumType>()->getDecl();
+        assert(ED && "EnumType has no EnumDecl");
+        DiagnoseUseOfDecl(ED, Loc);
+        Underlying = ED->getIntegerType();
+      }
+      assert(!Underlying.isNull());
+      return Context.getUnaryTransformType(BaseType, Underlying,
+                                        UnaryTransformType::EnumUnderlyingType);
+    }
+  }
+  llvm_unreachable("unknown unary transform type");
 }

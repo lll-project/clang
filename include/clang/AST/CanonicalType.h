@@ -291,6 +291,8 @@ public:
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isPromotableIntegerType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isSignedIntegerType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isUnsignedIntegerType)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isSignedIntegerOrEnumerationType)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isUnsignedIntegerOrEnumerationType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isConstantSizeType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isSpecifierType)
 
@@ -630,6 +632,14 @@ struct CanProxyAdaptor<DecltypeType> : public CanProxyBase<DecltypeType> {
   LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getUnderlyingType)
 };
 
+template <>
+struct CanProxyAdaptor<UnaryTransformType>
+    : public CanProxyBase<UnaryTransformType> {
+  LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getBaseType)
+  LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getUnderlyingType)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(UnaryTransformType::UTTKind, getUTTKind)
+};
+
 template<>
 struct CanProxyAdaptor<TagType> : public CanProxyBase<TagType> {
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(TagDecl *, getDecl)
@@ -655,7 +665,8 @@ struct CanProxyAdaptor<TemplateTypeParmType>
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(unsigned, getDepth)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(unsigned, getIndex)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isParameterPack)
-  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(IdentifierInfo *, getName)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(TemplateTypeParmDecl *, getDecl)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(IdentifierInfo *, getIdentifier)
 };
 
 template<>

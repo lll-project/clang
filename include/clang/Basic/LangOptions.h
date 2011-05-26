@@ -88,6 +88,8 @@ public:
                                   // used (instead of C99 semantics).
   unsigned NoInline          : 1; // Should __NO_INLINE__ be defined.
 
+  unsigned Deprecated        : 1; // Should __DEPRECATED be defined.
+
   unsigned ObjCGCBitmapPrint : 1; // Enable printing of gc's bitmap layout
                                   // for __weak/__strong ivars.
 
@@ -129,6 +131,7 @@ public:
                                     // testing languages such as OpenCL.
 
   unsigned MRTD : 1;            // -mrtd calling convention
+  unsigned DelayedTemplateParsing : 1;  // Delayed template parsing
 
 private:
   // We declare multibit enums as unsigned because MSVC insists on making enums
@@ -211,6 +214,8 @@ public:
     GNUInline = 0;
     NoInline = 0;
 
+    Deprecated = 0;
+
     CharIsSigned = 1;
     ShortWChar = 0;
     ShortEnums = 0;
@@ -224,6 +229,7 @@ public:
     NoBitFieldTypeAlign = 0;
     FakeAddressSpaceMap = 0;
     MRTD = 0;
+    DelayedTemplateParsing = 0;
     ParseUnknownAnytype = 0;
   }
 

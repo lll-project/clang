@@ -344,9 +344,11 @@ public:
   
   /// Return the total amount of physical memory allocated for representing
   /// AST nodes and type information.
-  size_t getTotalAllocatedMemory() const {
+  size_t getASTAllocatedMemory() const {
     return BumpAlloc.getTotalMemory();
   }
+  /// Return the total memory used for various side tables.
+  size_t getSideTableAllocatedMemory() const;
   
   PartialDiagnostic::StorageAllocator &getDiagAllocator() {
     return DiagAllocator;
@@ -394,6 +396,31 @@ public:
   FieldDecl *getInstantiatedFromUnnamedFieldDecl(FieldDecl *Field);
 
   void setInstantiatedFromUnnamedFieldDecl(FieldDecl *Inst, FieldDecl *Tmpl);
+  
+  /// ZeroBitfieldFollowsNonBitfield - return 'true" if 'FD' is a zero-length
+  /// bitfield which follows the non-bitfield 'LastFD'.
+  bool ZeroBitfieldFollowsNonBitfield(const FieldDecl *FD, 
+                                      const FieldDecl *LastFD) const;
+
+  /// ZeroBitfieldFollowsBitfield - return 'true" if 'FD' is a zero-length
+  /// bitfield which follows the bitfield 'LastFD'.
+  bool ZeroBitfieldFollowsBitfield(const FieldDecl *FD,
+                                   const FieldDecl *LastFD) const;
+  
+  /// BitfieldFollowsBitfield - return 'true" if 'FD' is a
+  /// bitfield which follows the bitfield 'LastFD'.
+  bool BitfieldFollowsBitfield(const FieldDecl *FD,
+                                   const FieldDecl *LastFD) const;
+  
+  /// NoneBitfieldFollowsBitfield - return 'true" if 'FD' is not a
+  /// bitfield which follows the bitfield 'LastFD'.
+  bool NoneBitfieldFollowsBitfield(const FieldDecl *FD,
+                                   const FieldDecl *LastFD) const;
+  
+  /// BitfieldFollowsNoneBitfield - return 'true" if 'FD' is a
+  /// bitfield which follows the none bitfield 'LastFD'.
+  bool BitfieldFollowsNoneBitfield(const FieldDecl *FD,
+                                   const FieldDecl *LastFD) const;
 
   // Access to the set of methods overridden by the given C++ method.
   typedef CXXMethodVector::iterator overridden_cxx_method_iterator;
@@ -426,7 +453,7 @@ public:
   CanQualType FloatTy, DoubleTy, LongDoubleTy;
   CanQualType FloatComplexTy, DoubleComplexTy, LongDoubleComplexTy;
   CanQualType VoidPtrTy, NullPtrTy;
-  CanQualType OverloadTy, DependentTy, UnknownAnyTy;
+  CanQualType DependentTy, OverloadTy, BoundMemberTy, UnknownAnyTy;
   CanQualType ObjCBuiltinIdTy, ObjCBuiltinClassTy, ObjCBuiltinSelTy;
 
   // Types for deductions in C++0x [stmt.ranged]'s desugaring. Built on demand.
@@ -692,7 +719,7 @@ public:
 
   QualType getTemplateTypeParmType(unsigned Depth, unsigned Index,
                                    bool ParameterPack,
-                                   IdentifierInfo *Name = 0) const;
+                                   TemplateTypeParmDecl *ParmDecl = 0) const;
 
   QualType getTemplateSpecializationType(TemplateName T,
                                          const TemplateArgument *Args,
@@ -751,6 +778,10 @@ public:
 
   /// getDecltypeType - C++0x decltype.
   QualType getDecltypeType(Expr *e) const;
+
+  /// getUnaryTransformType - unary type transforms
+  QualType getUnaryTransformType(QualType BaseType, QualType UnderlyingType,
+                                 UnaryTransformType::UTTKind UKind) const;
 
   /// getAutoType - C++0x deduced auto type.
   QualType getAutoType(QualType DeducedType) const;
@@ -1426,7 +1457,8 @@ public:
   /// MakeIntValue - Make an APSInt of the appropriate width and
   /// signedness for the given \arg Value and integer \arg Type.
   llvm::APSInt MakeIntValue(uint64_t Value, QualType Type) const {
-    llvm::APSInt Res(getIntWidth(Type), !Type->isSignedIntegerType());
+    llvm::APSInt Res(getIntWidth(Type), 
+                     !Type->isSignedIntegerOrEnumerationType());
     Res = Value;
     return Res;
   }
@@ -1514,12 +1546,26 @@ public:
   /// which declarations were built.
   static unsigned NumImplicitCopyConstructorsDeclared;
 
+  /// \brief The number of implicitly-declared move constructors.
+  static unsigned NumImplicitMoveConstructors;
+
+  /// \brief The number of implicitly-declared move constructors for
+  /// which declarations were built.
+  static unsigned NumImplicitMoveConstructorsDeclared;
+
   /// \brief The number of implicitly-declared copy assignment operators.
   static unsigned NumImplicitCopyAssignmentOperators;
   
   /// \brief The number of implicitly-declared copy assignment operators for 
   /// which declarations were built.
   static unsigned NumImplicitCopyAssignmentOperatorsDeclared;
+
+  /// \brief The number of implicitly-declared move assignment operators.
+  static unsigned NumImplicitMoveAssignmentOperators;
+  
+  /// \brief The number of implicitly-declared move assignment operators for 
+  /// which declarations were built.
+  static unsigned NumImplicitMoveAssignmentOperatorsDeclared;
 
   /// \brief The number of implicitly-declared destructors.
   static unsigned NumImplicitDestructors;
@@ -1541,7 +1587,13 @@ private:
                                   bool ExpandStructures,
                                   const FieldDecl *Field,
                                   bool OutermostType = false,
-                                  bool EncodingProperty = false) const;
+                                  bool EncodingProperty = false,
+                                  bool StructField = false) const;
+
+  // Adds the encoding of the structure's members.
+  void getObjCEncodingForStructureImpl(RecordDecl *RD, std::string &S,
+                                       const FieldDecl *Field,
+                                       bool includeVBases = true) const;
  
   const ASTRecordLayout &
   getObjCLayout(const ObjCInterfaceDecl *D,

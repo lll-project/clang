@@ -35,6 +35,8 @@ def : DiagGroup<"ctor-dtor-privacy">;
 def : DiagGroup<"declaration-after-statement">;
 def GNUDesignator : DiagGroup<"gnu-designator">;
 
+def DeleteNonVirtualDtor : DiagGroup<"delete-non-virtual-dtor">;
+
 def DeprecatedDeclarations : DiagGroup<"deprecated-declarations">;
 def DeprecatedWritableStr : DiagGroup<"deprecated-writable-strings">;
 def Deprecated : DiagGroup<"deprecated", [ DeprecatedDeclarations] >,
@@ -148,14 +150,15 @@ def UnknownAttributes : DiagGroup<"unknown-attributes">;
 def UnnamedTypeTemplateArgs : DiagGroup<"unnamed-type-template-args">;
 def UnusedArgument : DiagGroup<"unused-argument">;
 def UnusedExceptionParameter : DiagGroup<"unused-exception-parameter">;
-def UnusedFunction : DiagGroup<"unused-function">;
-def UnusedMemberFunction : DiagGroup<"unused-member-function">;
+def UnneededInternalDecl : DiagGroup<"unneeded-internal-declaration">;
+def UnneededMemberFunction : DiagGroup<"unneeded-member-function">;
+def UnusedFunction : DiagGroup<"unused-function", [UnneededInternalDecl]>;
+def UnusedMemberFunction : DiagGroup<"unused-member-function",
+                                     [UnneededMemberFunction]>;
 def UnusedLabel : DiagGroup<"unused-label">;
 def UnusedParameter : DiagGroup<"unused-parameter">;
 def UnusedValue    : DiagGroup<"unused-value">;
 def UnusedVariable : DiagGroup<"unused-variable">;
-def UnneededInternalDecl : DiagGroup<"unneeded-internal-declaration">;
-def UnneededMemberFunction : DiagGroup<"unneeded-member-function">;
 def UsedButMarkedUnused : DiagGroup<"used-but-marked-unused">;
 def ReadOnlySetterAttrs : DiagGroup<"readonly-setter-attrs">;
 def Reorder : DiagGroup<"reorder">;
@@ -176,7 +179,10 @@ def AsmCastLvalue : DiagGroup<"asm-cast-lvalue">;
 def AsmLabelOnAutoVar : DiagGroup<"asm-label-on-auto-var">;
 def AsmQualifier : DiagGroup<"asm-qualifier">;
 def VolatileRegisterVar : DiagGroup<"volatile-register-var">;
-def : DiagGroup<"write-strings">;
+
+// GCC calls -Wdeprecated-writable-strings -Wwrite-strings.
+def GCCWriteStrings : DiagGroup<"write-strings" , [DeprecatedWritableStr]>;
+
 def CharSubscript : DiagGroup<"char-subscripts">;
 def LargeByValueCopy : DiagGroup<"large-by-value-copy">;
 def DuplicateArgDecl : DiagGroup<"duplicate-method-arg">;
@@ -184,7 +190,9 @@ def DuplicateArgDecl : DiagGroup<"duplicate-method-arg">;
 // Aggregation warning settings.
 
 // -Widiomatic-parentheses contains warnings about 'idiomatic'
-// missing parentheses;  it is off by default.
+// missing parentheses;  it is off by default.  We do not include it
+// in -Wparentheses because most users who use -Wparentheses explicitly
+// do not want these warnings.
 def Parentheses : DiagGroup<"parentheses",
                             [LogicalOpParentheses,
                              DiagGroup<"idiomatic-parentheses">,
@@ -205,16 +213,11 @@ def Conversion : DiagGroup<"conversion",
                             BoolConversions]>,
                  DiagCategory<"Value Conversion Issue">;
 
-def Unneeded : DiagGroup<"unneeded",
-                         [UnneededInternalDecl
-                       //,UnneededMemberFunction (clean-up llvm before enabling)
-                          ]>;
-
 def Unused : DiagGroup<"unused",
                        [UnusedArgument, UnusedFunction, UnusedLabel,
                         // UnusedParameter, (matches GCC's behavior)
                         // UnusedMemberFunction, (clean-up llvm before enabling)
-                        UnusedValue, UnusedVariable, Unneeded]>,
+                        UnusedValue, UnusedVariable]>,
                         DiagCategory<"Unused Entity Issue">;
 
 // Format settings.
@@ -240,6 +243,7 @@ def Extra : DiagGroup<"extra", [
 def Most : DiagGroup<"most", [
     CharSubscript,
     Comment,
+    DeleteNonVirtualDtor,
     Format,
     Implicit,
     MismatchedTags,
@@ -276,6 +280,8 @@ def NonGCC : DiagGroup<"non-gcc",
 def CXX0xStaticNonIntegralInitializer :
   DiagGroup<"c++0x-static-nonintegral-init">;
 def CXX0x : DiagGroup<"c++0x-extensions", [CXX0xStaticNonIntegralInitializer]>;
+def DelegatingCtorCycles :
+  DiagGroup<"delegating-ctor-cycles">;
 
 // A warning group for warnings about GCC extensions.
 def GNU : DiagGroup<"gnu", [GNUDesignator, AsmCastLvalue, AsmLabelOnAutoVar, VLA]>;

@@ -153,6 +153,8 @@ namespace clang {
 
     void VisitUnaryTypeTraitExpr(UnaryTypeTraitExpr *E);
     void VisitBinaryTypeTraitExpr(BinaryTypeTraitExpr *E);
+    void VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E);
+    void VisitExpressionTraitExpr(ExpressionTraitExpr *E);
     void VisitCXXNoexceptExpr(CXXNoexceptExpr *E);
     void VisitPackExpansionExpr(PackExpansionExpr *E);
     void VisitSizeOfPackExpr(SizeOfPackExpr *E);
@@ -179,7 +181,7 @@ void ASTStmtWriter::VisitStmt(Stmt *S) {
 void ASTStmtWriter::VisitNullStmt(NullStmt *S) {
   VisitStmt(S);
   Writer.AddSourceLocation(S->getSemiLoc(), Record);
-  Record.push_back(S->LeadingEmptyMacro);
+  Writer.AddSourceLocation(S->LeadingEmptyMacro, Record);
   Code = serialization::STMT_NULL;
 }
 
@@ -382,6 +384,7 @@ void ASTStmtWriter::VisitDeclRefExpr(DeclRefExpr *E) {
   VisitExpr(E);
 
   Record.push_back(E->hasQualifier());
+  Record.push_back(E->getDecl() != E->getFoundDecl());
   Record.push_back(E->hasExplicitTemplateArgs());
 
   if (E->hasExplicitTemplateArgs()) {
@@ -391,6 +394,9 @@ void ASTStmtWriter::VisitDeclRefExpr(DeclRefExpr *E) {
 
   if (E->hasQualifier())
     Writer.AddNestedNameSpecifierLoc(E->getQualifierLoc(), Record);
+
+  if (E->getDecl() != E->getFoundDecl())
+    Writer.AddDeclRef(E->getFoundDecl(), Record);
 
   if (E->hasExplicitTemplateArgs())
     AddExplicitTemplateArgumentList(E->getExplicitTemplateArgs());
@@ -667,9 +673,6 @@ void ASTStmtWriter::VisitExtVectorElementExpr(ExtVectorElementExpr *E) {
 
 void ASTStmtWriter::VisitInitListExpr(InitListExpr *E) {
   VisitExpr(E);
-  Record.push_back(E->getNumInits());
-  for (unsigned I = 0, N = E->getNumInits(); I != N; ++I)
-    Writer.AddStmt(E->getInit(I));
   Writer.AddStmt(E->getSyntacticForm());
   Writer.AddSourceLocation(E->getLBraceLoc(), Record);
   Writer.AddSourceLocation(E->getRBraceLoc(), Record);
@@ -680,6 +683,17 @@ void ASTStmtWriter::VisitInitListExpr(InitListExpr *E) {
   else
     Writer.AddDeclRef(E->getInitializedFieldInUnion(), Record);
   Record.push_back(E->hadArrayRangeDesignator());
+  Record.push_back(E->getNumInits());
+  if (isArrayFiller) {
+    // ArrayFiller may have filled "holes" due to designated initializer.
+    // Replace them by 0 to indicate that the filler goes in that place.
+    Expr *filler = E->getArrayFiller();
+    for (unsigned I = 0, N = E->getNumInits(); I != N; ++I)
+      Writer.AddStmt(E->getInit(I) != filler ? E->getInit(I) : 0);
+  } else {
+    for (unsigned I = 0, N = E->getNumInits(); I != N; ++I)
+      Writer.AddStmt(E->getInit(I));
+  }
   Code = serialization::EXPR_INIT_LIST;
 }
 
@@ -1329,6 +1343,24 @@ void ASTStmtWriter::VisitBinaryTypeTraitExpr(BinaryTypeTraitExpr *E) {
   Writer.AddTypeSourceInfo(E->getLhsTypeSourceInfo(), Record);
   Writer.AddTypeSourceInfo(E->getRhsTypeSourceInfo(), Record);
   Code = serialization::EXPR_BINARY_TYPE_TRAIT;
+}
+
+void ASTStmtWriter::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E) {
+  VisitExpr(E);
+  Record.push_back(E->getTrait());
+  Record.push_back(E->getValue());
+  Writer.AddSourceRange(E->getSourceRange(), Record);
+  Writer.AddTypeSourceInfo(E->getQueriedTypeSourceInfo(), Record);
+  Code = serialization::EXPR_ARRAY_TYPE_TRAIT;
+}
+
+void ASTStmtWriter::VisitExpressionTraitExpr(ExpressionTraitExpr *E) {
+  VisitExpr(E);
+  Record.push_back(E->getTrait());
+  Record.push_back(E->getValue());
+  Writer.AddSourceRange(E->getSourceRange(), Record);
+  Writer.AddStmt(E->getQueriedExpression());
+  Code = serialization::EXPR_CXX_EXPRESSION_TRAIT;
 }
 
 void ASTStmtWriter::VisitCXXNoexceptExpr(CXXNoexceptExpr *E) {

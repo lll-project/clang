@@ -119,7 +119,7 @@ ExprResult Sema::ParseObjCStringLiteral(SourceLocation *AtLocs,
   return new (Context) ObjCStringLiteral(S, Ty, AtLocs[0]);
 }
 
-Expr *Sema::BuildObjCEncodeExpression(SourceLocation AtLoc,
+ExprResult Sema::BuildObjCEncodeExpression(SourceLocation AtLoc,
                                       TypeSourceInfo *EncodedTypeInfo,
                                       SourceLocation RParenLoc) {
   QualType EncodedType = EncodedTypeInfo->getType();
@@ -127,6 +127,12 @@ Expr *Sema::BuildObjCEncodeExpression(SourceLocation AtLoc,
   if (EncodedType->isDependentType())
     StrTy = Context.DependentTy;
   else {
+    if (!EncodedType->getAsArrayTypeUnsafe()) // Incomplete array is handled.
+      if (RequireCompleteType(AtLoc, EncodedType,
+                         PDiag(diag::err_incomplete_type_objc_at_encode)
+                             << EncodedTypeInfo->getTypeLoc().getSourceRange()))
+        return ExprError();
+
     std::string Str;
     Context.getObjCEncodingForType(EncodedType, Str);
 
@@ -1155,7 +1161,7 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
           // Search protocol qualifiers.
           Method = LookupMethodInQualifiedType(Sel, OCIType, true);
         
-        bool forwardClass = false;
+        const ObjCInterfaceDecl *forwardClass = 0;
         if (!Method) {
           // If we have implementations in scope, check "private" methods.
           Method = LookupPrivateInstanceMethod(Sel, ClassDecl);
@@ -1167,7 +1173,8 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
             if (OCIType->qual_empty()) {
               Method = LookupInstanceMethodInGlobalPool(Sel,
                                                  SourceRange(LBracLoc, RBracLoc));
-              forwardClass = OCIType->getInterfaceDecl()->isForwardDecl();
+              if (OCIType->getInterfaceDecl()->isForwardDecl())
+                forwardClass = OCIType->getInterfaceDecl();
               if (Method && !forwardClass)
                 Diag(Loc, diag::warn_maynot_respond)
                   << OCIType->getInterfaceDecl()->getIdentifier() << Sel;

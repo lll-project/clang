@@ -127,6 +127,7 @@ PCHValidator::ReadLanguageOptions(const LangOptions &LangOpts) {
   PARSE_LANGOPT_IMPORTANT(PICLevel, diag::warn_pch_pic_level);
   PARSE_LANGOPT_IMPORTANT(GNUInline, diag::warn_pch_gnu_inline);
   PARSE_LANGOPT_IMPORTANT(NoInline, diag::warn_pch_no_inline);
+  PARSE_LANGOPT_IMPORTANT(Deprecated, diag::warn_pch_deprecated);
   PARSE_LANGOPT_IMPORTANT(AccessControl, diag::warn_pch_access_control);
   PARSE_LANGOPT_IMPORTANT(CharIsSigned, diag::warn_pch_char_signed);
   PARSE_LANGOPT_IMPORTANT(ShortWChar, diag::warn_pch_short_wchar);
@@ -954,8 +955,16 @@ bool ASTReader::ReadDeclContextStorage(llvm::BitstreamCursor &Cursor,
   return false;
 }
 
-void ASTReader::Error(const char *Msg) {
-  Diag(diag::err_fe_pch_malformed) << Msg;
+void ASTReader::Error(llvm::StringRef Msg) {
+  Error(diag::err_fe_pch_malformed, Msg);
+}
+
+void ASTReader::Error(unsigned DiagID,
+                      llvm::StringRef Arg1, llvm::StringRef Arg2) {
+  if (Diags.isDiagnosticInFlight())
+    Diags.SetDelayedDiagnostic(DiagID, Arg1, Arg2);
+  else
+    Diag(DiagID) << Arg1 << Arg2;
 }
 
 /// \brief Tell the AST listener about the predefines buffers in the chain.
@@ -1307,8 +1316,7 @@ ASTReader::ASTReadResult ASTReader::ReadSLocEntryRecord(unsigned ID) {
          || (time_t)Record[5] != File->getModificationTime()
 #endif
         )) {
-      Diag(diag::err_fe_pch_file_modified)
-        << Filename;
+      Error(diag::err_fe_pch_file_modified, Filename);
       return Failure;
     }
 
@@ -1687,7 +1695,8 @@ namespace {
       using namespace clang::io;
       HeaderFileInfo HFI;
       unsigned Flags = *d++;
-      HFI.isImport = (Flags >> 3) & 0x01;
+      HFI.isImport = (Flags >> 4) & 0x01;
+      HFI.isPragmaOnce = (Flags >> 3) & 0x01;
       HFI.DirInfo = (Flags >> 1) & 0x03;
       HFI.Resolved = Flags & 0x01;
       HFI.NumIncludes = ReadUnalignedLE16(d);
@@ -2103,15 +2112,6 @@ ASTReader::ReadASTBlock(PerFileData &F) {
       TotalVisibleDeclContexts += Record[3];
       break;
 
-    case TENTATIVE_DEFINITIONS:
-      // Optimization for the first block.
-      if (TentativeDefinitions.empty())
-        TentativeDefinitions.swap(Record);
-      else
-        TentativeDefinitions.insert(TentativeDefinitions.end(),
-                                    Record.begin(), Record.end());
-      break;
-
     case UNUSED_FILESCOPED_DECLS:
       // Optimization for the first block.
       if (UnusedFileScopedDecls.empty())
@@ -2119,6 +2119,15 @@ ASTReader::ReadASTBlock(PerFileData &F) {
       else
         UnusedFileScopedDecls.insert(UnusedFileScopedDecls.end(),
                                      Record.begin(), Record.end());
+      break;
+
+    case DELEGATING_CTORS:
+      // Optimization for the first block.
+      if (DelegatingCtorDecls.empty())
+        DelegatingCtorDecls.swap(Record);
+      else
+        DelegatingCtorDecls.insert(DelegatingCtorDecls.end(),
+                                   Record.begin(), Record.end());
       break;
 
     case WEAK_UNDECLARED_IDENTIFIERS:
@@ -2226,6 +2235,10 @@ ASTReader::ReadASTBlock(PerFileData &F) {
       MaybeAddSystemRootToFilename(OriginalFileName);
       break;
 
+    case ORIGINAL_FILE_ID:
+      OriginalFileID = FileID::get(Record[0]);
+      break;
+        
     case ORIGINAL_PCH_DIR:
       // The primary AST will be the last to get here, so it will be the one
       // that's used.
@@ -2320,6 +2333,15 @@ ASTReader::ReadASTBlock(PerFileData &F) {
       // Later tables overwrite earlier ones.
       OpenCLExtensions.swap(Record);
       break;
+
+    case TENTATIVE_DEFINITIONS:
+      // Optimization for the first block.
+      if (TentativeDefinitions.empty())
+        TentativeDefinitions.swap(Record);
+      else
+        TentativeDefinitions.insert(TentativeDefinitions.end(),
+                                    Record.begin(), Record.end());
+      break;
     }
     First = false;
   }
@@ -2362,7 +2384,7 @@ ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
       PP->getHeaderSearchInfo().SetExternalLookup(this);
     if (TotalNumPreallocatedPreprocessingEntities > 0) {
       if (!PP->getPreprocessingRecord())
-        PP->createPreprocessingRecord();
+        PP->createPreprocessingRecord(true);
       PP->getPreprocessingRecord()->SetExternalSource(*this,
                                      TotalNumPreallocatedPreprocessingEntities);
     }
@@ -2431,12 +2453,15 @@ ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
   // the source manager to the file source file from which the preamble was
   // built. This is the only valid way to use a precompiled preamble.
   if (Type == Preamble) {
-    SourceLocation Loc
-      = SourceMgr.getLocation(FileMgr.getFile(getOriginalSourceFile()), 1, 1);
-    if (Loc.isValid()) {
-      std::pair<FileID, unsigned> Decomposed = SourceMgr.getDecomposedLoc(Loc);
-      SourceMgr.SetPreambleFileID(Decomposed.first);
+    if (OriginalFileID.isInvalid()) {
+      SourceLocation Loc
+        = SourceMgr.getLocation(FileMgr.getFile(getOriginalSourceFile()), 1, 1);
+      if (Loc.isValid())
+        OriginalFileID = SourceMgr.getDecomposedLoc(Loc).first;
     }
+    
+    if (!OriginalFileID.isInvalid())
+      SourceMgr.SetPreambleFileID(OriginalFileID);
   }
   
   return Success;
@@ -2561,7 +2586,7 @@ void ASTReader::setPreprocessor(Preprocessor &pp) {
     TotalNum += Chain[I]->NumPreallocatedPreprocessingEntities;
   if (TotalNum) {
     if (!PP->getPreprocessingRecord())
-      PP->createPreprocessingRecord();
+      PP->createPreprocessingRecord(true);
     PP->getPreprocessingRecord()->SetExternalSource(*this, TotalNum);
   }
 }
@@ -2835,6 +2860,7 @@ bool ASTReader::ParseLanguageOptions(
     PARSE_LANGOPT(PICLevel);
     PARSE_LANGOPT(GNUInline);
     PARSE_LANGOPT(NoInline);
+    PARSE_LANGOPT(Deprecated);
     PARSE_LANGOPT(AccessControl);
     PARSE_LANGOPT(CharIsSigned);
     PARSE_LANGOPT(ShortWChar);
@@ -3170,6 +3196,13 @@ QualType ASTReader::ReadTypeRecord(unsigned Index) {
   case TYPE_DECLTYPE:
     return Context->getDecltypeType(ReadExpr(*Loc.F));
 
+  case TYPE_UNARY_TRANSFORM: {
+    QualType BaseType = GetType(Record[0]);
+    QualType UnderlyingType = GetType(Record[1]);
+    UnaryTransformType::UTTKind UKind = (UnaryTransformType::UTTKind)Record[2];
+    return Context->getUnaryTransformType(BaseType, UnderlyingType, UKind);
+  }
+
   case TYPE_AUTO:
     return Context->getAutoType(GetType(Record[0]));
 
@@ -3291,8 +3324,9 @@ QualType ASTReader::ReadTypeRecord(unsigned Index) {
     unsigned Depth = Record[Idx++];
     unsigned Index = Record[Idx++];
     bool Pack = Record[Idx++];
-    IdentifierInfo *Name = GetIdentifierInfo(Record, Idx);
-    return Context->getTemplateTypeParmType(Depth, Index, Pack, Name);
+    TemplateTypeParmDecl *D =
+      cast_or_null<TemplateTypeParmDecl>(GetDecl(Record[Idx++]));
+    return Context->getTemplateTypeParmType(Depth, Index, Pack, D);
   }
 
   case TYPE_DEPENDENT_NAME: {
@@ -3343,14 +3377,14 @@ QualType ASTReader::ReadTypeRecord(unsigned Index) {
     TemplateName Name = ReadTemplateName(*Loc.F, Record, Idx);
     llvm::SmallVector<TemplateArgument, 8> Args;
     ReadTemplateArgumentList(Args, *Loc.F, Record, Idx);
-    QualType Canon = GetType(Record[Idx++]);
+    QualType Underlying = GetType(Record[Idx++]);
     QualType T;
-    if (Canon.isNull())
+    if (Underlying.isNull())
       T = Context->getCanonicalTemplateSpecializationType(Name, Args.data(),
                                                           Args.size());
     else
       T = Context->getTemplateSpecializationType(Name, Args.data(),
-                                                 Args.size(), Canon);
+                                                 Args.size(), Underlying);
     const_cast<Type*>(T.getTypePtr())->setDependent(IsDependent);
     return T;
   }
@@ -3484,6 +3518,12 @@ void TypeLocReader::VisitTypeOfTypeLoc(TypeOfTypeLoc TL) {
 }
 void TypeLocReader::VisitDecltypeTypeLoc(DecltypeTypeLoc TL) {
   TL.setNameLoc(ReadSourceLocation(Record, Idx));
+}
+void TypeLocReader::VisitUnaryTransformTypeLoc(UnaryTransformTypeLoc TL) {
+  TL.setKWLoc(ReadSourceLocation(Record, Idx));
+  TL.setLParenLoc(ReadSourceLocation(Record, Idx));
+  TL.setRParenLoc(ReadSourceLocation(Record, Idx));
+  TL.setUnderlyingTInfo(Reader.GetTypeSourceInfo(F, Record, Idx));
 }
 void TypeLocReader::VisitAutoTypeLoc(AutoTypeLoc TL) {
   TL.setNameLoc(ReadSourceLocation(Record, Idx));
@@ -3626,6 +3666,7 @@ QualType ASTReader::GetType(TypeID ID) {
     case PREDEF_TYPE_DOUBLE_ID:     T = Context->DoubleTy;           break;
     case PREDEF_TYPE_LONGDOUBLE_ID: T = Context->LongDoubleTy;       break;
     case PREDEF_TYPE_OVERLOAD_ID:   T = Context->OverloadTy;         break;
+    case PREDEF_TYPE_BOUND_MEMBER:  T = Context->BoundMemberTy;      break;
     case PREDEF_TYPE_DEPENDENT_ID:  T = Context->DependentTy;        break;
     case PREDEF_TYPE_UNKNOWN_ANY:   T = Context->UnknownAnyTy;       break;
     case PREDEF_TYPE_NULLPTR_ID:    T = Context->NullPtrTy;          break;
@@ -4040,6 +4081,23 @@ void ASTReader::PrintStats() {
   std::fprintf(stderr, "\n");
 }
 
+/// Return the amount of memory used by memory buffers, breaking down
+/// by heap-backed versus mmap'ed memory.
+void ASTReader::getMemoryBufferSizes(MemoryBufferSizes &sizes) const {
+  for (unsigned i = 0, e = Chain.size(); i != e; ++i)
+    if (llvm::MemoryBuffer *buf = Chain[i]->Buffer.get()) {
+      size_t bytes = buf->getBufferSize();
+      switch (buf->getBufferKind()) {
+        case llvm::MemoryBuffer::MemoryBuffer_Malloc:
+          sizes.malloc_bytes += bytes;
+          break;
+        case llvm::MemoryBuffer::MemoryBuffer_MMap:
+          sizes.mmap_bytes += bytes;
+          break;
+      }
+    }
+}
+
 void ASTReader::InitializeSema(Sema &S) {
   SemaObj = &S;
   S.ExternalSource = this;
@@ -4066,6 +4124,13 @@ void ASTReader::InitializeSema(Sema &S) {
   for (unsigned I = 0, N = UnusedFileScopedDecls.size(); I != N; ++I) {
     DeclaratorDecl *D = cast<DeclaratorDecl>(GetDecl(UnusedFileScopedDecls[I]));
     SemaObj->UnusedFileScopedDecls.push_back(D);
+  }
+
+  // If there were any delegating constructors, add them to Sema's list
+  for (unsigned I = 0, N = DelegatingCtorDecls.size(); I != N; ++I) {
+    CXXConstructorDecl *D
+     = cast<CXXConstructorDecl>(GetDecl(DelegatingCtorDecls[I]));
+    SemaObj->DelegatingCtorDecls.push_back(D);
   }
 
   // If there were any locally-scoped external declarations,
@@ -4113,21 +4178,21 @@ void ASTReader::InitializeSema(Sema &S) {
         SemaObj->ReferencedSelectors.insert(std::make_pair(Sel, SelLoc));
       }
     }
-
-    // If there were any pending implicit instantiations, deserialize them
-    // and add them to Sema's queue of such instantiations.
-    assert(F->PendingInstantiations.size() % 2 == 0 &&
-           "Expected pairs of entries");
-    for (unsigned Idx = 0, N = F->PendingInstantiations.size(); Idx < N;) {
-      ValueDecl *D=cast<ValueDecl>(GetDecl(F->PendingInstantiations[Idx++]));
-      SourceLocation Loc = ReadSourceLocation(*F, F->PendingInstantiations,Idx);
-      SemaObj->PendingInstantiations.push_back(std::make_pair(D, Loc));
-    }
   }
 
-  // The two special data sets below always come from the most recent PCH,
+  // The special data sets below always come from the most recent PCH,
   // which is at the front of the chain.
   PerFileData &F = *Chain.front();
+
+  // If there were any pending implicit instantiations, deserialize them
+  // and add them to Sema's queue of such instantiations.
+  assert(F.PendingInstantiations.size() % 2 == 0 &&
+         "Expected pairs of entries");
+  for (unsigned Idx = 0, N = F.PendingInstantiations.size(); Idx < N;) {
+    ValueDecl *D=cast<ValueDecl>(GetDecl(F.PendingInstantiations[Idx++]));
+    SourceLocation Loc = ReadSourceLocation(F, F.PendingInstantiations,Idx);
+    SemaObj->PendingInstantiations.push_back(std::make_pair(D, Loc));
+  }
 
   // If there were any weak undeclared identifiers, deserialize them and add to
   // Sema's list of weak undeclared identifiers.
@@ -4679,18 +4744,28 @@ ASTReader::ReadCXXCtorInitializers(PerFileData &F, const RecordData &Record,
       bool IsBaseVirtual = false;
       FieldDecl *Member = 0;
       IndirectFieldDecl *IndirectMember = 0;
+      CXXConstructorDecl *Target = 0;
 
-      bool IsBaseInitializer = Record[Idx++];
-      if (IsBaseInitializer) {
+      CtorInitializerType Type = (CtorInitializerType)Record[Idx++];
+      switch (Type) {
+       case CTOR_INITIALIZER_BASE:
         BaseClassInfo = GetTypeSourceInfo(F, Record, Idx);
         IsBaseVirtual = Record[Idx++];
-      } else {
-        bool IsIndirectMemberInitializer = Record[Idx++];
-        if (IsIndirectMemberInitializer)
-          IndirectMember = cast<IndirectFieldDecl>(GetDecl(Record[Idx++]));
-        else
-          Member = cast<FieldDecl>(GetDecl(Record[Idx++]));
+        break;
+
+       case CTOR_INITIALIZER_DELEGATING:
+        Target = cast<CXXConstructorDecl>(GetDecl(Record[Idx++]));
+        break;
+
+       case CTOR_INITIALIZER_MEMBER:
+        Member = cast<FieldDecl>(GetDecl(Record[Idx++]));
+        break;
+
+       case CTOR_INITIALIZER_INDIRECT_MEMBER:
+        IndirectMember = cast<IndirectFieldDecl>(GetDecl(Record[Idx++]));
+        break;
       }
+
       SourceLocation MemberOrEllipsisLoc = ReadSourceLocation(F, Record, Idx);
       Expr *Init = ReadExpr(F);
       SourceLocation LParenLoc = ReadSourceLocation(F, Record, Idx);
@@ -4708,10 +4783,13 @@ ASTReader::ReadCXXCtorInitializers(PerFileData &F, const RecordData &Record,
       }
 
       CXXCtorInitializer *BOMInit;
-      if (IsBaseInitializer) {
+      if (Type == CTOR_INITIALIZER_BASE) {
         BOMInit = new (C) CXXCtorInitializer(C, BaseClassInfo, IsBaseVirtual,
                                              LParenLoc, Init, RParenLoc,
                                              MemberOrEllipsisLoc);
+      } else if (Type == CTOR_INITIALIZER_DELEGATING) {
+        BOMInit = new (C) CXXCtorInitializer(C, MemberOrEllipsisLoc, LParenLoc,
+                                             Target, Init, RParenLoc);
       } else if (IsWritten) {
         if (Member)
           BOMInit = new (C) CXXCtorInitializer(C, Member, MemberOrEllipsisLoc,

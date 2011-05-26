@@ -168,6 +168,8 @@ def Wa_COMMA : CommaJoined<"-Wa,">,
   HelpText<"Pass the comma separated arguments in <arg> to the assembler">,
   MetaVarName<"<arg>">;
 def Wall : Flag<"-Wall">, Group<W_Group>;
+def Wdeprecated : Flag<"-Wdeprecated">, Group<W_Group>;
+def Wno_deprecated : Flag<"-Wno-deprecated">, Group<W_Group>;
 def Wextra : Flag<"-Wextra">, Group<W_Group>;
 def Wl_COMMA : CommaJoined<"-Wl,">, Flags<[LinkerInput, RenderAsInput]>,
   HelpText<"Pass the comma separated arguments in <arg> to the linker">,
@@ -177,6 +179,8 @@ def Wnonportable_cfstrings : Joined<"-Wnonportable-cfstrings">, Group<W_Group>;
 def Wp_COMMA : CommaJoined<"-Wp,">,
   HelpText<"Pass the comma separated arguments in <arg> to the preprocessor">,
   MetaVarName<"<arg>">;
+def Wwrite_strings : Flag<"-Wwrite-strings">, Group<W_Group>;
+def Wno_write_strings : Flag<"-Wno-write-strings">, Group<W_Group>;
 def W_Joined : Joined<"-W">, Group<W_Group>;
 def Xanalyzer : Separate<"-Xanalyzer">,
   HelpText<"Pass <arg> to the static analyzer">, MetaVarName<"<arg>">;
@@ -236,8 +240,8 @@ def emit_llvm : Flag<"-emit-llvm">,
 def exported__symbols__list : Separate<"-exported_symbols_list">;
 def e : JoinedOrSeparate<"-e">;
 def fPIC : Flag<"-fPIC">, Group<f_Group>;
-def fPIE : Flag<"-fPIE">, Group<f_Group>;
-def fno_PIE : Flag<"-fno-PIE">, Group<f_Group>;
+def fPIE : Flag<"-fPIE">, Group<f_Group>, Flags<[NoArgumentUnused]>;
+def fno_PIE : Flag<"-fno-PIE">, Group<f_Group>, Flags<[NoArgumentUnused]>;
 def faccess_control : Flag<"-faccess-control">, Group<f_Group>;
 def fallow_unsupported : Flag<"-fallow-unsupported">, Group<f_Group>;
 def fapple_kext : Flag<"-fapple-kext">, Group<f_Group>;
@@ -277,12 +281,16 @@ def fdiagnostics_parseable_fixits : Flag<"-fdiagnostics-parseable-fixits">, Grou
 def fdiagnostics_show_option : Flag<"-fdiagnostics-show-option">, Group<f_Group>;
 def fdiagnostics_show_name : Flag<"-fdiagnostics-show-name">, Group<f_Group>;
 def fdiagnostics_show_note_include_stack : Flag<"-fdiagnostics-show-note-include-stack">, Group<f_Group>;
+def fdiagnostics_format_EQ : Joined<"-fdiagnostics-format=">, Group<f_clang_Group>;
 def fdiagnostics_show_category_EQ : Joined<"-fdiagnostics-show-category=">, Group<f_clang_Group>;
 def fdollars_in_identifiers : Flag<"-fdollars-in-identifiers">, Group<f_Group>;
+def fdwarf2_cfi_asm : Flag<"-fdwarf2-cfi-asm">, Group<f_Group>;
+def fno_dwarf2_cfi_asm : Flag<"-fno-dwarf2-cfi-asm">, Group<f_Group>;
 def felide_constructors : Flag<"-felide-constructors">, Group<f_Group>;
 def feliminate_unused_debug_symbols : Flag<"-feliminate-unused-debug-symbols">, Group<f_Group>;
 def femit_all_decls : Flag<"-femit-all-decls">, Group<f_Group>;
 def fencoding_EQ : Joined<"-fencoding=">, Group<f_Group>;
+def ferror_limit_EQ : Joined<"-ferror-limit=">, Group<f_Group>;
 def fexceptions : Flag<"-fexceptions">, Group<f_Group>;
 def fextdirs_EQ : Joined<"-fextdirs=">, Group<f_Group>;
 def fhosted : Flag<"-fhosted">, Group<f_Group>;
@@ -310,6 +318,7 @@ def fmerge_all_constants : Flag<"-fmerge-all-constants">, Group<f_Group>;
 def fmessage_length_EQ : Joined<"-fmessage-length=">, Group<f_Group>;
 def fms_extensions : Flag<"-fms-extensions">, Group<f_Group>;
 def fmsc_version : Joined<"-fmsc-version=">, Group<f_Group>;
+def fdelayed_template_parsing : Flag<"-fdelayed-template-parsing">, Group<f_Group>;
 def fmudflapth : Flag<"-fmudflapth">, Group<f_Group>;
 def fmudflap : Flag<"-fmudflap">, Group<f_Group>;
 def fnested_functions : Flag<"-fnested-functions">, Group<f_Group>;
@@ -342,6 +351,7 @@ def fno_lax_vector_conversions : Flag<"-fno-lax-vector-conversions">, Group<f_Gr
 def fno_math_errno : Flag<"-fno-math-errno">, Group<f_Group>;
 def fno_merge_all_constants : Flag<"-fno-merge-all-constants">, Group<f_Group>;
 def fno_ms_extensions : Flag<"-fno-ms-extensions">, Group<f_Group>;
+def fno_delayed_template_parsing : Flag<"-fno-delayed-template-parsing">, Group<f_Group>;
 def fno_objc_default_synthesize_properties 
   : Flag<"-fno-objc-default-synthesize-properties">, Group<f_Group>;
 def fno_objc_exceptions: Flag<"-fno-objc-exceptions">, Group<f_Group>;
@@ -388,8 +398,8 @@ def foutput_class_dir_EQ : Joined<"-foutput-class-dir=">, Group<f_Group>;
 def fpascal_strings : Flag<"-fpascal-strings">, Group<f_Group>;
 def fpch_preprocess : Flag<"-fpch-preprocess">, Group<f_Group>;
 def fpic : Flag<"-fpic">, Group<f_Group>;
-def fpie : Flag<"-fpie">, Group<f_Group>;
-def fno_pie : Flag<"-fno-pie">, Group<f_Group>;
+def fpie : Flag<"-fpie">, Group<f_Group>, Flags<[NoArgumentUnused]>;
+def fno_pie : Flag<"-fno-pie">, Group<f_Group>, Flags<[NoArgumentUnused]>;
 def fprofile_arcs : Flag<"-fprofile-arcs">, Group<f_Group>;
 def fprofile_generate : Flag<"-fprofile-generate">, Group<f_Group>;
 def framework : Separate<"-framework">, Flags<[LinkerInput]>;
@@ -397,6 +407,7 @@ def frtti : Flag<"-frtti">, Group<f_Group>;
 def fshort_enums : Flag<"-fshort-enums">, Group<f_Group>;
 def fshort_wchar : Flag<"-fshort-wchar">, Group<f_Group>;
 def fshow_overloads_EQ : Joined<"-fshow-overloads=">, Group<f_Group>;
+def fshow_column : Flag<"-fshow-column">, Group<f_Group>;
 def fshow_source_location : Flag<"-fshow-source-location">, Group<f_Group>;
 def fspell_checking : Flag<"-fspell-checking">, Group<f_Group>;
 def fsigned_bitfields : Flag<"-fsigned-bitfields">, Group<f_Group>;
@@ -407,10 +418,10 @@ def fstrict_aliasing : Flag<"-fstrict-aliasing">, Group<f_Group>;
 def fstrict_overflow : Flag<"-fstrict-overflow">, Group<f_Group>;
 def fsyntax_only : Flag<"-fsyntax-only">, Flags<[DriverOption]>;
 def ftabstop_EQ : Joined<"-ftabstop=">, Group<f_Group>;
-def ferror_limit_EQ : Joined<"-ferror-limit=">, Group<f_Group>;
 def ftemplate_depth_ : Joined<"-ftemplate-depth-">, Group<f_Group>;
 def ftemplate_backtrace_limit_EQ : Joined<"-ftemplate-backtrace-limit=">,
                                    Group<f_Group>;
+def ftest_coverage : Flag<"-ftest-coverage">, Group<f_Group>;
 def Wlarge_by_value_copy_def : Flag<"-Wlarge-by-value-copy">;
 def Wlarge_by_value_copy_EQ : Joined<"-Wlarge-by-value-copy=">;
 
@@ -477,11 +488,13 @@ def mfpu_EQ : Joined<"-mfpu=">, Group<m_Group>;
 def mhard_float : Flag<"-mhard-float">, Group<m_Group>;
 def miphoneos_version_min_EQ : Joined<"-miphoneos-version-min=">, Group<m_Group>;
 def mios_version_min_EQ : Joined<"-mios-version-min=">, Alias<miphoneos_version_min_EQ>;
+def mios_simulator_version_min_EQ : Joined<"-mios-simulator-version-min=">, Group<m_Group>;
 def mkernel : Flag<"-mkernel">, Group<m_Group>;
 def mlinker_version_EQ : Joined<"-mlinker-version=">, Flags<[NoForward]>;
 def mllvm : Separate<"-mllvm">;
 def mmacosx_version_min_EQ : Joined<"-mmacosx-version-min=">, Group<m_Group>;
 def mms_bitfields : Flag<"-mms-bitfields">, Group<m_Group>;
+def mstackrealign : Flag<"-mstackrealign">, Group<m_Group>;
 def mmmx : Flag<"-mmmx">, Group<m_x86_Features_Group>;
 def mno_3dnowa : Flag<"-mno-3dnowa">, Group<m_x86_Features_Group>;
 def mno_3dnow : Flag<"-mno-3dnow">, Group<m_x86_Features_Group>;
